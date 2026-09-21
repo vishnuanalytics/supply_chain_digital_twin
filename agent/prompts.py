@@ -115,6 +115,12 @@ Rules:
 - Always RETURN human-readable properties (ids and names), not just internal node objects.
 - For date properties, compare against date('{TODAY}'), not date() (which would use the real
   current date, not the demo's reference date).
+- The ONLY relationship types that exist are: SOURCED_FROM, BACKUP_FOR, USED_IN, PURCHASED_FROM,
+  MANUFACTURED_AT, STORED_IN, SUPPLIES, SERVICES, HAS_CONTRACT, PREVIOUSLY_CONTRACTED, COVERS.
+  Never invent a relationship type that isn't in this list (e.g. there is no DEALS_WITH,
+  LOCATED_IN, or CONTAINS edge) — if the question seems to need a connection not in this list,
+  it almost certainly means going through an intermediate node instead (e.g. Warehouse to Dealer
+  is a direct SUPPLIES edge, not via Region).
 """
 
 
