@@ -87,11 +87,15 @@ def render_answer_card(state: dict) -> None:
     st.markdown("**Graph trace**")
     highlighted_ids = extract_ids(state.get("neo4j_result"), state.get("postgres_result"), state.get("simulation_result"))
     if highlighted_ids:
-        nodes, edges = fetch_highlighted_subgraph(highlighted_ids)
-        if nodes:
-            agraph(nodes=nodes, edges=edges, config=default_config(height=420))
+        try:
+            nodes, edges = fetch_highlighted_subgraph(highlighted_ids)
+        except Exception:  # noqa: BLE001 - Neo4j going down mid-render shouldn't crash the card
+            st.caption("⚠️ Couldn't load the graph trace right now - Neo4j may be unreachable.")
         else:
-            st.caption("No graph nodes matched this answer's entities.")
+            if nodes:
+                agraph(nodes=nodes, edges=edges, config=default_config(height=420))
+            else:
+                st.caption("No graph nodes matched this answer's entities.")
     else:
         st.caption("This answer didn't traverse the graph directly (e.g. a pure billing/inventory lookup).")
 
