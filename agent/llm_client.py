@@ -41,18 +41,41 @@ def _call_groq(system: str, user: str, max_tokens: int) -> tuple[str, str]:
 
 
 def _call_openrouter(system: str, user: str, max_tokens: int) -> tuple[str, str]:
-    from openai import OpenAI
+    # Uses raw HTTP rather than the openai SDK: OpenRouter's free-tier reasoning models
+    # sometimes send leading whitespace/padding before the JSON body (likely a keep-alive
+    # artifact while a slow reasoning-heavy model computes), which has been observed to
+    # trip the openai SDK's response parsing with an opaque "'NoneType' object is not
+    # subscriptable" error. Parsing the body ourselves sidesteps that entirely.
+    import json
+    import urllib.error
+    import urllib.request
 
     if not config.OPENROUTER_API_KEY:
         raise ProviderError("OPENROUTER_API_KEY not set")
-    client = OpenAI(api_key=config.OPENROUTER_API_KEY, base_url="https://openrouter.ai/api/v1")
-    resp = client.chat.completions.create(
-        model=config.OPENROUTER_MODEL,
-        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-        temperature=0,
-        max_tokens=max_tokens,
+
+    body = json.dumps({
+        "model": config.OPENROUTER_MODEL,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        "temperature": 0,
+        "max_tokens": max_tokens,
+    }).encode()
+    req = urllib.request.Request(
+        "https://openrouter.ai/api/v1/chat/completions",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+        },
     )
-    return resp.choices[0].message.content, config.OPENROUTER_MODEL
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            payload = json.loads(resp.read().decode().strip())
+    except urllib.error.HTTPError as exc:
+        raise ProviderError(f"OpenRouter HTTP {exc.code}: {exc.read().decode()[:500]}") from exc
+
+    if "error" in payload:
+        raise ProviderError(f"OpenRouter error: {payload['error']}")
+    return payload["choices"][0]["message"]["content"], config.OPENROUTER_MODEL
 
 
 def _call_anthropic(system: str, user: str, max_tokens: int) -> tuple[str, str]:
@@ -100,6 +123,6 @@ def complete(system: str, user: str, max_tokens: int = 1024) -> LLMResult:
             latency_ms = (time.monotonic() - t0) * 1000
             return LLMResult(content=content, provider=provider, model=model, latency_ms=round(latency_ms, 1))
         except Exception as exc:  # noqa: BLE001 - deliberately broad, this is a fallback chain
-            errors.append(f"{provider}: {exc}")
+            errors.append(f"{provider}: {type(exc).__name__}: {exc}")
             continue
     raise RuntimeError(f"All LLM providers failed: {'; '.join(errors)}")
