@@ -1,0 +1,15 @@
+langgraph
+langgraph-checkpoint-postgres
+langchain
+langchain-anthropic
+anthropic
+neo4j
+psycopg2-binary
+sqlalchemy
+streamlit
+streamlit-agraph
+pyvis
+plotly
+pydeck
+python-dotenv
+pandas
