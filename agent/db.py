@@ -40,7 +40,7 @@ def get_neo4j_driver():
 def run_cypher(query: str, params: dict | None = None) -> list[dict]:
     _assert_read_only(query)
     driver = get_neo4j_driver()
-    with driver.session() as session:
+    with driver.session(database=config.NEO4J_DATABASE) as session:
         result = session.run(query, params or {})
         return [record.data() for record in result]
 

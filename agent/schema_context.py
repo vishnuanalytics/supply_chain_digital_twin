@@ -26,7 +26,11 @@ Node labels and key properties:
 
 Relationships:
   (RawMaterial)-[:SOURCED_FROM {lead_time_days, cost_per_unit, currency, is_primary}]->(Supplier)
-  (Supplier)-[:BACKUP_FOR]->(Supplier)
+  (backupSupplier:Supplier)-[:BACKUP_FOR]->(primarySupplier:Supplier)
+    // direction matters: the SOURCE node of this edge is the backup/secondary supplier,
+    // the TARGET node is the primary supplier it backs up. To find "the backup supplier
+    // for material X", first find X's primary supplier via SOURCED_FROM {is_primary:true},
+    // then MATCH (primary)<-[:BACKUP_FOR]-(backup) — i.e. backup points INTO primary.
   (RawMaterial)-[:USED_IN {quantity_required, unit_of_measure}]->(IntermediatePart)
   (IntermediatePart)-[:PURCHASED_FROM]->(ThirdPartyVendor)
   (IntermediatePart)-[:USED_IN {quantity_required}]->(Product)

@@ -32,6 +32,10 @@ def _call_groq(system: str, user: str, max_tokens: int) -> tuple[str, str]:
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
         temperature=0,
         max_tokens=max_tokens,
+        # gpt-oss models on Groq spend part of max_tokens on a hidden reasoning channel
+        # before the visible answer; "low" keeps that from starving short structured
+        # outputs (JSON/Cypher/SQL) of their token budget. Ignored by non-reasoning models.
+        extra_body={"reasoning_effort": "low"},
     )
     return resp.choices[0].message.content, config.GROQ_MODEL
 
@@ -88,6 +92,11 @@ def complete(system: str, user: str, max_tokens: int = 1024) -> LLMResult:
         t0 = time.monotonic()
         try:
             content, model = fn(system, user, max_tokens)
+            if not content or not content.strip():
+                # Some (esp. reasoning) models can burn the whole token budget on a
+                # hidden reasoning channel and return no visible answer. Treat that
+                # as a failure of this provider rather than an empty "success".
+                raise ProviderError(f"{provider} ({model}) returned empty content")
             latency_ms = (time.monotonic() - t0) * 1000
             return LLMResult(content=content, provider=provider, model=model, latency_ms=round(latency_ms, 1))
         except Exception as exc:  # noqa: BLE001 - deliberately broad, this is a fallback chain

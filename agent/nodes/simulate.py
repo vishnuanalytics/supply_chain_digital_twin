@@ -5,30 +5,73 @@ multi-hop traversal + arithmetic (graph impact -> inventory buffer -> risk),
 not freeform querying — the LLM's job upstream (classify_query) is just to
 detect which simulation applies and extract its parameters from the question.
 """
+import re
 import time
 
 from .. import db
 from ..state import AgentState
 
+# Generic words the classifier LLM tends to include in extracted entity names
+# ("our aluminum SUPPLIER") that would otherwise never match a real node name.
+_STOPWORDS = {
+    "supplier", "suppliers", "vendor", "vendors", "material", "materials", "raw",
+    "part", "parts", "product", "products", "company", "the", "our", "a", "an", "of",
+}
+# Maps classify_query's entity_type hint ("supplier"/"raw_material"/"vendor"/"product") to
+# the Neo4j label to prefer when a name/keyword matches more than one label — this is more
+# reliable than guessing from stray role words left in entity_name.
+_ENTITY_TYPE_TO_LABEL = {
+    "supplier": "Supplier", "raw_material": "RawMaterial", "vendor": "ThirdPartyVendor", "product": "Product",
+}
+# Fallback if entity_type wasn't provided: guess from role words left in entity_name itself.
+_ROLE_LABEL_HINTS = {
+    "supplier": "Supplier", "suppliers": "Supplier", "vendor": "ThirdPartyVendor", "vendors": "ThirdPartyVendor",
+    "material": "RawMaterial", "materials": "RawMaterial", "part": "IntermediatePart", "parts": "IntermediatePart",
+    "product": "Product", "products": "Product",
+}
 
-def resolve_entity(name: str | None, labels: list[str]) -> list[dict]:
+
+def resolve_entity(name: str | None, labels: list[str], entity_type: str | None = None) -> list[dict]:
     if not name:
         return []
+    words = re.findall(r"[A-Za-z0-9]+", name)
+    keywords = [w for w in words if w.lower() not in _STOPWORDS] or words or [name]
+    preferred_label = _ENTITY_TYPE_TO_LABEL.get((entity_type or "").lower()) or next(
+        (_ROLE_LABEL_HINTS[w.lower()] for w in words if w.lower() in _ROLE_LABEL_HINTS), None
+    )
+
     rows = db.run_cypher(
         """
         MATCH (n)
-        WHERE any(lbl IN labels(n) WHERE lbl IN $labels) AND toLower(n.name) CONTAINS toLower($name)
+        WHERE any(lbl IN labels(n) WHERE lbl IN $labels)
+          AND any(k IN $keywords WHERE toLower(n.name) CONTAINS toLower(k))
         RETURN labels(n)[0] AS label, n.id AS id, n.name AS name
-        LIMIT 5
+        LIMIT 25
         """,
-        {"labels": labels, "name": name},
+        {"labels": labels, "keywords": keywords},
     )
+
+    # Rank by closeness rather than taking the first (arbitrarily-ordered) match: an exact
+    # name match beats a partial one, and matching more of the keywords beats matching just
+    # one shared generic word (e.g. "SUV Suspension Kit" vs "Sedan Suspension Kit" both
+    # contain "Suspension"/"Kit", but only one is an exact/near-exact match).
+    name_lower = name.lower()
+
+    def score(row: dict) -> tuple:
+        row_name = row["name"].lower()
+        exact = row_name == name_lower
+        substring_match = name_lower in row_name or row_name in name_lower
+        keyword_hits = sum(1 for k in keywords if k.lower() in row_name)
+        label_match = preferred_label is not None and row["label"] == preferred_label
+        return (label_match, exact, substring_match, keyword_hits)
+
+    rows.sort(key=score, reverse=True)
     return rows
 
 
-def simulate_disruption(entity_name: str | None, delay_days: int | None) -> dict:
+def simulate_disruption(entity_name: str | None, delay_days: int | None, entity_type: str | None = None) -> dict:
     delay_days = delay_days or 21
-    matches = resolve_entity(entity_name, ["Supplier", "RawMaterial"])
+    matches = resolve_entity(entity_name, ["Supplier", "RawMaterial"], entity_type)
     if not matches:
         return {"error": f"Could not find a supplier or raw material matching '{entity_name}'."}
     match = matches[0]
@@ -70,12 +113,15 @@ def simulate_disruption(entity_name: str | None, delay_days: int | None) -> dict
         if stock:
             if stock["quantity_on_hand"] <= stock["reorder_point"]:
                 risk_level = "high"
+                stock_status = "already at or below its reorder point"
             elif stock["quantity_on_hand"] <= stock["reorder_point"] * 2:
                 risk_level = "medium"
+                stock_status = "above its reorder point but with less than a 2x buffer"
             else:
                 risk_level = "low"
+                stock_status = "comfortably above its reorder point (more than 2x buffer)"
         else:
-            risk_level = "unknown"
+            risk_level, stock_status = "unknown", "no inventory data on file"
 
         affected.append({
             "material_id": material["id"],
@@ -86,6 +132,7 @@ def simulate_disruption(entity_name: str | None, delay_days: int | None) -> dict
             "on_hand_quantity": stock["quantity_on_hand"] if stock else None,
             "reorder_point": stock["reorder_point"] if stock else None,
             "risk_level": risk_level,
+            "stock_status": stock_status,
             "affected_products": products,
         })
 
@@ -196,7 +243,7 @@ def simulate_cost_impact(material_name: str | None, pct_change: float | None) ->
 
 
 _SIMULATORS = {
-    "disruption": lambda p: simulate_disruption(p.get("entity_name"), p.get("delay_days")),
+    "disruption": lambda p: simulate_disruption(p.get("entity_name"), p.get("delay_days"), p.get("entity_type")),
     "capacity": lambda p: simulate_capacity(p.get("entity_name"), p.get("order_qty"), p.get("timeframe_days")),
     "cost_impact": lambda p: simulate_cost_impact(p.get("entity_name"), p.get("pct_change")),
 }
