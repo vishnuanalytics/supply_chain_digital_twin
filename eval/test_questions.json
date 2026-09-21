@@ -179,9 +179,9 @@
     "question": "Great Lakes Steel Co had a fire and can't ship for a month. What's affected?",
     "checks": {
       "confidence_in": ["high", "estimated"],
-      "must_include_any": ["RM1", "RM2"],
-      "must_include_any_2": ["P1", "P2", "P3", "P4"]
+      "must_include_any": ["RM1", "RM2", "Hot-Rolled Steel", "Steel Rod"],
+      "must_include_any_2": ["P1", "P2", "P3", "P4", "SUV Suspension", "Sedan Suspension", "Standard Brake", "Heavy-Duty Brake"]
     },
-    "ground_truth_note": "S1 supplies RM1+RM2; downstream products via Cypher traversal are P1,P2,P3,P4."
+    "ground_truth_note": "S1 supplies RM1(Hot-Rolled Steel Sheet)+RM2(Steel Rod Stock); downstream products are P1(Standard Brake System),P2(Heavy-Duty Brake System),P3(Sedan Suspension Kit),P4(SUV Suspension Kit). Checking names too, not just IDs - a good user-facing answer naturally uses human-readable names throughout, confirmed via a live run that correctly named all 4 products but used zero bare IDs."
   }
 ]
