@@ -22,7 +22,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from agent.graph import ask  # noqa: E402
+import uuid  # noqa: E402
+
+from langgraph.types import Command  # noqa: E402
+
+from agent.graph import ask, get_graph  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
 QUESTIONS_PATH = ROOT / "test_questions.json"
@@ -60,12 +64,25 @@ def check_answer(answer: str, confidence: str | None, checks: dict) -> list[str]
     return failures
 
 
+def _ask_auto_approving(question: str) -> dict:
+    """Like agent.graph.ask(), but auto-approves any human_approval_gate interrupt
+    (build step 8's disruption-reorder recommendation) instead of leaving the graph
+    paused - a headless eval run has no one to click Approve/Reject, so it always
+    approves and lets the downstream assertions judge answer quality as normal."""
+    thread_id = str(uuid.uuid4())
+    state = ask(question, thread_id=thread_id)
+    if "__interrupt__" in state:
+        run_config = {"configurable": {"thread_id": thread_id}}
+        state = get_graph().invoke(Command(resume={"approved": True, "note": "eval harness auto-approved"}), run_config)
+    return state
+
+
 def run(test_cases: list[dict], sleep_seconds: float) -> list[dict]:
     results = []
     for i, case in enumerate(test_cases):
         t0 = time.monotonic()
         try:
-            state = ask(case["question"])
+            state = _ask_auto_approving(case["question"])
             answer = state.get("answer") or ""
             confidence = state.get("confidence")
             reasoning_log = state.get("reasoning_log", [])

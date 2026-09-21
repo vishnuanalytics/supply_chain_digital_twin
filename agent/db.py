@@ -58,3 +58,20 @@ def run_sql(query: str, params: tuple | None = None) -> list[dict]:
             return [dict(row) for row in cur.fetchall()]
     finally:
         conn.close()
+
+
+def log_action(action_type: str, description: str, status: str, note: str = "") -> None:
+    """The one deliberate write path in this app (everything else is read-only LLM-
+    generated Cypher/SQL, checked by _assert_read_only). Used only by
+    agent/nodes/approval.py after a human has approved or rejected a recommendation -
+    never called with LLM-generated input."""
+    conn = get_postgres_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO action_log (action_type, description, status, note) VALUES (%s, %s, %s, %s)",
+                (action_type, description, status, note),
+            )
+        conn.commit()
+    finally:
+        conn.close()

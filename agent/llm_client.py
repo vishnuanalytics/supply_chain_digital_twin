@@ -6,6 +6,8 @@ adding a new provider never touches node logic.
 import time
 from dataclasses import dataclass
 
+from langsmith import traceable
+
 from . import config
 
 
@@ -27,6 +29,7 @@ class EmptyContentError(ProviderError):
     missing key or rate limit which won't be fixed by retrying the same provider."""
 
 
+@traceable(run_type="llm", name="groq")
 def _call_groq(system: str, user: str, max_tokens: int) -> tuple[str, str]:
     from openai import OpenAI
 
@@ -46,6 +49,7 @@ def _call_groq(system: str, user: str, max_tokens: int) -> tuple[str, str]:
     return resp.choices[0].message.content, config.GROQ_MODEL
 
 
+@traceable(run_type="llm", name="openrouter")
 def _call_openrouter(system: str, user: str, max_tokens: int) -> tuple[str, str]:
     # Uses raw HTTP rather than the openai SDK: OpenRouter's free-tier reasoning models
     # sometimes send leading whitespace/padding before the JSON body (likely a keep-alive
@@ -84,6 +88,7 @@ def _call_openrouter(system: str, user: str, max_tokens: int) -> tuple[str, str]
     return payload["choices"][0]["message"]["content"], config.OPENROUTER_MODEL
 
 
+@traceable(run_type="llm", name="anthropic")
 def _call_anthropic(system: str, user: str, max_tokens: int) -> tuple[str, str]:
     import anthropic
 
@@ -107,10 +112,16 @@ _PROVIDER_FNS = {
 }
 
 
+@traceable(run_type="chain", name="llm_complete")
 def complete(system: str, user: str, max_tokens: int = 1024) -> LLMResult:
     """Tries each configured provider in order, falling back to the next on any
     error (missing key, rate limit, timeout, provider outage). Raises RuntimeError
     only if every configured provider fails.
+
+    Decorated with @traceable (a no-op unless LANGSMITH_TRACING=true) so every LLM call -
+    including failed fallback attempts - shows up as a nested span in LangSmith under
+    whichever graph node called it, since LangGraph nodes already run inside a traced
+    Runnable context when tracing is enabled.
     """
     errors = []
     for provider in config.LLM_PROVIDER_ORDER:

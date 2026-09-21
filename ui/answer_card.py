@@ -107,6 +107,19 @@ def render_answer_card(state: dict) -> None:
 
 
 def _render_reasoning(state: dict) -> None:
+    decisions = state.get("decision_log") or []
+    if decisions:
+        st.markdown("**⚡ Decision engine**")
+        for d in decisions:
+            engine = d.get("engine_used", "?")
+            latency = d.get("latency_ms")
+            latency_str = f"{latency:.0f} ms" if isinstance(latency, (int, float)) else "—"
+            if d.get("error"):
+                st.markdown(f"- `{d.get('decision')}` via `{engine}`: :red[failed - {d['error']}] (fell back)")
+            else:
+                st.markdown(f"- `{d.get('decision')}` = **{d.get('value')}** via `{engine}` ({latency_str})")
+        st.markdown("---")
+
     log = state.get("reasoning_log") or []
     if not log:
         st.caption("No reasoning steps recorded.")
@@ -124,6 +137,11 @@ def _render_reasoning(state: dict) -> None:
             st.code(entry["cypher_query"], language="cypher")
         if entry.get("sql_query"):
             st.code(entry["sql_query"], language="sql")
+        if node == "human_approval_gate" and not entry.get("skipped"):
+            icon = "✅ approved" if entry.get("approved") else "❌ rejected"
+            st.markdown(f"🔔 {entry.get('recommendation', '')} — **{icon}**")
+            if entry.get("note"):
+                st.caption(f"Note: {entry['note']}")
         if "valid" in entry:
             icon = "✅" if entry["valid"] else "❌"
             st.markdown(f"{icon} validation: {entry.get('reason', '')}")

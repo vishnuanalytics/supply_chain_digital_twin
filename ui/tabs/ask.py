@@ -3,7 +3,7 @@ running history of 3-layer answer cards.
 """
 import streamlit as st
 
-from ui.agent_runner import render_error_card, run_question
+from ui.agent_runner import render_error_card, resume_question, run_question
 from ui.answer_card import render_answer_card
 
 EXAMPLE_QUESTIONS = [
@@ -16,12 +16,41 @@ EXAMPLE_QUESTIONS = [
 ]
 
 
+def _render_approval_prompt(pending: dict) -> None:
+    """Shown instead of the normal example-questions/history view whenever
+    human_approval_gate has paused a run (build step 8) - the question isn't answered
+    yet, so it stays out of history until this is resolved."""
+    rec = pending["interrupt"]
+    st.markdown('<div class="scdt-card">', unsafe_allow_html=True)
+    st.markdown(f"**Q: {pending['question']}**")
+    st.markdown("🔔 **This answer includes a recommendation that needs your approval first:**")
+    st.markdown(rec.get("description", "A recommended action needs your approval."))
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    col1, col2 = st.columns(2)
+    approve = col1.button("✅ Approve", key="approve_action", width="stretch")
+    reject = col2.button("❌ Reject", key="reject_action", width="stretch")
+
+    if approve or reject:
+        result = resume_question(pending["thread_id"], approved=approve)
+        st.session_state.pop("pending_approval", None)
+        st.session_state["history"].append({"question": pending["question"], **result})
+        if "state" in result:
+            st.session_state["last_reasoning_log"] = result["state"].get("reasoning_log")
+        st.rerun()
+
+
 def render_ask_tab() -> None:
     st.markdown("### Ask a question")
     st.caption("Try one of these, or type your own question below.")
 
     if "history" not in st.session_state:
         st.session_state["history"] = []
+
+    pending_approval = st.session_state.get("pending_approval")
+    if pending_approval:
+        _render_approval_prompt(pending_approval)
+        return
 
     cols = st.columns(3)
     for i, q in enumerate(EXAMPLE_QUESTIONS):
@@ -35,9 +64,13 @@ def render_ask_tab() -> None:
     pending = st.session_state.pop("pending_question", None)
     if pending:
         result = run_question(pending)
-        st.session_state["history"].append({"question": pending, **result})
-        if "state" in result:
-            st.session_state["last_reasoning_log"] = result["state"].get("reasoning_log")
+        if "interrupt" in result:
+            st.session_state["pending_approval"] = {**result, "question": pending}
+            st.rerun()
+        else:
+            st.session_state["history"].append({"question": pending, **result})
+            if "state" in result:
+                st.session_state["last_reasoning_log"] = result["state"].get("reasoning_log")
 
     if not st.session_state["history"]:
         st.markdown(

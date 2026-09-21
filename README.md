@@ -97,6 +97,7 @@ automatically) is in [`PROJECT_SPEC.md`](PROJECT_SPEC.md) and
 - **Groq → OpenRouter → Anthropic**, tried in that order with automatic fallback on any error — the app runs on free-tier models by default and only touches a paid key if both free providers fail
 - **Streamlit** for the UI, `streamlit-agraph` for graph visualizations, `plotly` for the billing Gantt chart
 - **Python** throughout; no JavaScript beyond the embedded Mermaid diagram
+- Optional (build step 8): **LangSmith** for tracing, **TypeSafe AI's Jev** as a swappable fast/cheap decision engine, **`langgraph-checkpoint-postgres`** for the human-in-the-loop approval gate's paused state
 
 ## Setup
 
@@ -143,17 +144,37 @@ python3 eval/run_eval.py --ids <id1,id2>  # a subset
 
 ## Project status
 
-All 7 build steps in [`PROJECT_SPEC.md`](PROJECT_SPEC.md)'s Build Order are
+All 8 build steps in [`PROJECT_SPEC.md`](PROJECT_SPEC.md)'s Build Order are
 complete: schema + seed data, the LangGraph core, the self-correction
 (`validate_results`) loop, the evaluation harness, the full Streamlit UI, the
-Contracts & Billing dashboard, and this polish pass. Both schema/seed scripts
-were validated against throwaway `postgres:16-alpine` and `neo4j:5-community`
-Docker containers during development, and the UI was verified with real
-headless-Chromium browser testing, not just Python-level checks.
+Contracts & Billing dashboard, the polish pass, and the optional extensions
+below. Both schema/seed scripts were validated against throwaway
+`postgres:16-alpine` and `neo4j:5-community` Docker containers during
+development, and the UI was verified with real headless-Chromium browser
+testing, not just Python-level checks.
 
-Optional, not built (by design — see PROJECT_SPEC.md's Build Order step 8):
-LangSmith tracing, a human-in-the-loop approval gate with a Postgres
-checkpointer, and the Jev decision-engine toggle.
+### Optional extensions (build step 8)
+
+- **LangSmith tracing** — every node and every LLM call (including failed
+  fallback attempts across providers) is instrumented with `@traceable`.
+  Set `LANGSMITH_TRACING=true` + `LANGSMITH_API_KEY` in `.env` to see full
+  run traces at [smith.langchain.com](https://smith.langchain.com); leave it
+  unset and nothing changes (the decorator is a no-op).
+- **Human-in-the-loop approval gate** — when a disruption simulation finds a
+  material already at/below its reorder point *and* a backup supplier on
+  file, the graph pauses (via LangGraph's `interrupt()`, backed by a
+  `PostgresSaver` checkpointer so the pause survives a restart) and the Ask
+  tab shows an Approve/Reject prompt before "executing" the reorder
+  recommendation (logged to a new `action_log` table). Every other question —
+  the large majority — passes through untouched.
+- **Jev decision-engine toggle** — the sidebar's "Use Jev for fast decisions"
+  toggle routes `classify_query`'s routing/simulation-detection decisions
+  through [TypeSafe AI's Jev](https://typesafe.ai) (a typed Choice/Noul model,
+  ~100ms and a fraction of a cent per call) instead of a full LLM call, only
+  falling through to a scoped Claude/Groq call to extract freeform simulation
+  parameters when a what-if simulation is actually detected. Always falls
+  back to the normal full-LLM path on any error or missing `TYPESAFE_API_KEY`
+  — the app never depends on Jev being reachable.
 
 ## Deploying
 
@@ -195,6 +216,13 @@ changes are needed between local and deployed.
    POSTGRES_URL = "postgresql://user:password@host/dbname?sslmode=require"
 
    DEMO_REFERENCE_DATE = "2026-09-21"
+
+   # Optional (build step 8) - leave these out entirely to skip Jev/LangSmith
+   TYPESAFE_API_KEY = "your-typesafe-key"
+   TYPESAFE_MODEL = "jev-latest"
+   LANGSMITH_TRACING = "false"
+   LANGSMITH_API_KEY = "your-langsmith-key"
+   LANGSMITH_PROJECT = "supply-chain-digital-twin"
    ```
 
 5. Click **Deploy**. The first build takes a few minutes (installing

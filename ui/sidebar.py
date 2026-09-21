@@ -1,7 +1,5 @@
-"""Persistent sidebar: live graph stats + the previous query's engine/latency
-breakdown. The "Use Jev for fast decisions" toggle from the spec is deliberately not
-here yet - the spec says to build it after the Jev integration itself exists (build
-order step 8), and a toggle for a feature that doesn't exist yet would just be dead UI.
+"""Persistent sidebar: live graph stats, the "Use Jev for fast decisions" toggle
+(build step 8), and the previous query's engine/latency breakdown.
 """
 import streamlit as st
 
@@ -33,6 +31,18 @@ def render_sidebar() -> None:
         else:
             st.caption("⚠️ Couldn't reach Neo4j right now.")
         st.caption(f"Demo data as of {config.DEMO_REFERENCE_DATE.isoformat()}")
+
+        st.markdown("### Decision engine")
+        st.session_state["use_jev"] = st.toggle(
+            "Use Jev for fast decisions", value=st.session_state.get("use_jev", False),
+            help="Routes classify_query's query_type/simulation detection through TypeSafe "
+                 "AI's Jev (a fast, cheap typed-decision model) instead of a full LLM call. "
+                 "Always falls back to Claude/Groq automatically if Jev errors or isn't configured.",
+        )
+        if st.session_state["use_jev"] and not config.TYPESAFE_API_KEY:
+            st.caption("⚠️ No TYPESAFE_API_KEY set - every decision will fall back to the normal LLM path.")
+        if config.LANGSMITH_TRACING_ENABLED:
+            st.caption(f"🔍 LangSmith tracing on · project `{config.LANGSMITH_PROJECT}`")
 
         last_log = st.session_state.get("last_reasoning_log")
         if last_log:

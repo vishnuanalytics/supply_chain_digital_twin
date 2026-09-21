@@ -4,6 +4,7 @@
 -- IDs used in Neo4j (see docs/data_reference.md) so the two stores can be
 -- cross-referenced by ID during agent development.
 
+DROP TABLE IF EXISTS action_log CASCADE;
 DROP TABLE IF EXISTS invoices CASCADE;
 DROP TABLE IF EXISTS shipments CASCADE;
 DROP TABLE IF EXISTS monthly_billing CASCADE;
@@ -106,6 +107,18 @@ CREATE TABLE supplier_performance (
     supplier_id       VARCHAR(10) PRIMARY KEY,
     on_time_rate      NUMERIC(5, 2) NOT NULL,
     avg_delay_days    NUMERIC(6, 2) NOT NULL
+);
+
+-- Written by agent/nodes/approval.py (build step 8's human_approval_gate) when a
+-- disruption's recommended reorder-from-backup-supplier action is approved or rejected.
+-- Not seeded - starts empty, populated live by the app.
+CREATE TABLE action_log (
+    action_id     SERIAL PRIMARY KEY,
+    action_type   VARCHAR(50) NOT NULL,
+    description   TEXT NOT NULL,
+    status        VARCHAR(20) NOT NULL CHECK (status IN ('approved', 'rejected')),
+    note          TEXT,
+    decided_at    TIMESTAMP NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_po_material ON purchase_orders(material_id);

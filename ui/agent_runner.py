@@ -2,6 +2,8 @@
 used by both the Ask a Question tab and the Contracts & Billing dashboard's row-click
 drill-down - the spec asks for the exact same interaction pattern in both places.
 """
+import uuid
+
 import streamlit as st
 
 from agent.graph import get_graph
@@ -11,30 +13,65 @@ _LOADING_MESSAGES = {
     "query_neo4j": "Traversing the supply graph...",
     "query_postgres": "Checking inventory, contracts & billing records...",
     "simulate_scenario": "Running the what-if simulation...",
+    "human_approval_gate": "Checking whether this needs your approval...",
     "validate_results": "Double-checking the results...",
     "synthesize": "Writing your answer...",
 }
 
 
+def _stream(initial_input, config, status) -> dict:
+    final_state = {}
+    for snapshot in get_graph().stream(initial_input, config, stream_mode="values"):
+        final_state = snapshot
+        log = final_state.get("reasoning_log") or []
+        if log:
+            last_node = log[-1].get("node")
+            status.update(label=_LOADING_MESSAGES.get(last_node, "Working..."))
+    return final_state
+
+
 def run_question(question: str) -> dict:
     """Runs the question through the agent with a live, descriptive status indicator
-    (not a generic spinner) and returns either {"state": final_state} or
-    {"error": "..."} for the caller to render.
+    (not a generic spinner). Returns one of:
+      {"state": final_state}                        - answered normally
+      {"interrupt": {...}, "thread_id": "..."}       - paused on human_approval_gate;
+                                                        pass thread_id to resume_question()
+      {"error": "..."}                               - for the caller to render
     """
+    thread_id = str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}, "run_name": "ask_question"}
     with st.status("Understanding your question...", expanded=False) as status:
         try:
-            final_state = {}
-            for snapshot in get_graph().stream(
-                {"question": question, "reasoning_log": [], "retry_count": 0}, stream_mode="values"
-            ):
-                final_state = snapshot
-                log = final_state.get("reasoning_log") or []
-                if log:
-                    last_node = log[-1].get("node")
-                    status.update(label=_LOADING_MESSAGES.get(last_node, "Working..."))
+            final_state = _stream(
+                {
+                    "question": question, "reasoning_log": [], "decision_log": [], "retry_count": 0,
+                    "use_jev": st.session_state.get("use_jev", False),
+                },
+                config, status,
+            )
+            if "__interrupt__" in final_state:
+                status.update(label="Waiting for your approval...", state="running")
+                return {"interrupt": final_state["__interrupt__"][0].value, "thread_id": thread_id}
             status.update(label="Answer ready", state="complete")
             return {"state": final_state}
         except Exception as exc:  # noqa: BLE001 - surfaced as a designed error state, not a crash
+            status.update(label="Ran into a problem", state="error")
+            return {"error": str(exc)}
+
+
+def resume_question(thread_id: str, approved: bool, note: str = "") -> dict:
+    """Resumes a graph paused by human_approval_gate with the user's decision. Same
+    return shape as run_question() (minus a further interrupt - this app only ever
+    pauses once per question)."""
+    from langgraph.types import Command
+
+    config = {"configurable": {"thread_id": thread_id}, "run_name": "ask_question_resume"}
+    with st.status("Finishing up...", expanded=False) as status:
+        try:
+            final_state = _stream(Command(resume={"approved": approved, "note": note}), config, status)
+            status.update(label="Answer ready", state="complete")
+            return {"state": final_state}
+        except Exception as exc:  # noqa: BLE001
             status.update(label="Ran into a problem", state="error")
             return {"error": str(exc)}
 

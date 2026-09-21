@@ -102,6 +102,42 @@ def classify_user_prompt(question: str, feedback: str | None = None) -> str:
     return prompt
 
 
+# Used only by decision_engine.py's Jev fast path: query_type/requires_simulation/simulation_type
+# are cheap categorical decisions Jev can make directly, but simulation_params is genuine freeform
+# extraction (entity names, quantities) that has no typed Choice/Score/Noul equivalent, so it still
+# needs a real LLM call — scoped down to just this, now that simulation_type is already known.
+SIMULATION_PARAMS_SYSTEM = f"""You extract structured parameters for a supply-chain what-if
+simulation. Today's date is {TODAY}.
+
+Given a question and its already-decided simulation_type, extract simulation_params (use null for
+anything not mentioned):
+  entity_name (just the distinctive name/keyword itself, e.g. "aluminum" or "Titan Aluminum
+    Works" — strip generic role words like "supplier"/"material"/"vendor" from this field, put
+    that role in entity_type instead, since entity_name is matched against a name field and
+    "aluminum supplier" won't substring-match a node literally named "Titan Aluminum Works"),
+  entity_type (one of "supplier", "raw_material", "vendor", "product", or null if unclear — the
+    kind of thing entity_name refers to, based on how the question phrases it, e.g. "our aluminum
+    SUPPLIER" -> "supplier"; "STEEL prices" -> "raw_material"),
+  delay_days (integer, for disruption),
+  pct_change (float, percent, for cost_impact — e.g. 15 for "rise 15%"),
+  order_qty (integer, for capacity),
+  timeframe_days (integer, for capacity — e.g. "by next month" ~= 30)
+
+Example:
+Q: "Our aluminum supplier just had a 3-week delay. What's affected?" (simulation_type: disruption)
+{{"entity_name": "aluminum", "entity_type": "supplier", "delay_days": 21, "pct_change": null,
+  "order_qty": null, "timeframe_days": null}}
+
+Respond with ONLY a JSON object in this exact shape, no markdown fences, no explanation:
+{{"entity_name": null, "entity_type": null, "delay_days": null, "pct_change": null,
+  "order_qty": null, "timeframe_days": null}}
+"""
+
+
+def simulation_params_user_prompt(question: str, simulation_type: str) -> str:
+    return f"Question: {question}\nsimulation_type: {simulation_type}"
+
+
 CYPHER_SYSTEM = f"""You write read-only Cypher queries against a Neo4j supply chain graph.
 Today's date is {TODAY}.
 

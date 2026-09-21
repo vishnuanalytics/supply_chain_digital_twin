@@ -1,6 +1,6 @@
 """Builds the LangGraph agent: classify -> (neo4j and/or postgres, or a
-deterministic simulation) -> validate -> synthesize, with a bounded retry loop
-back to classify_query when validation fails.
+deterministic simulation) -> [human_approval_gate] -> validate -> synthesize, with a
+bounded retry loop back to classify_query when validation fails.
 
 Routing:
   classify_query
@@ -11,15 +11,21 @@ Routing:
     -> query_postgres                              if compound_multi_hop (need both stores)
     -> validate_results                            otherwise
   query_postgres -> validate_results
-  simulate_scenario -> validate_results
+  simulate_scenario -> human_approval_gate -> validate_results
+    (human_approval_gate is a no-op pass-through unless a disruption sim found a
+    high-risk material with a backup supplier on file - see agent/nodes/approval.py)
   validate_results
     -> synthesize                                  if valid, or retries exhausted (best effort)
     -> classify_query                              if invalid and retries remain (Corrective-RAG-style retry)
 """
+import uuid
+
 from langgraph.graph import END, StateGraph
 
+from .checkpointer import get_checkpointer
 from .nodes import (
     classify_query,
+    human_approval_gate,
     query_neo4j_node,
     query_postgres_node,
     simulate_scenario_node,
@@ -59,6 +65,7 @@ def build_graph():
     builder.add_node("query_neo4j", query_neo4j_node)
     builder.add_node("query_postgres", query_postgres_node)
     builder.add_node("simulate_scenario", simulate_scenario_node)
+    builder.add_node("human_approval_gate", human_approval_gate)
     builder.add_node("validate_results", validate_results_node)
     builder.add_node("synthesize", synthesize_node)
 
@@ -73,14 +80,15 @@ def build_graph():
         "validate_results": "validate_results",
     })
     builder.add_edge("query_postgres", "validate_results")
-    builder.add_edge("simulate_scenario", "validate_results")
+    builder.add_edge("simulate_scenario", "human_approval_gate")
+    builder.add_edge("human_approval_gate", "validate_results")
     builder.add_conditional_edges("validate_results", _route_after_validate, {
         "synthesize": "synthesize",
         "classify_query": "classify_query",
     })
     builder.add_edge("synthesize", END)
 
-    return builder.compile()
+    return builder.compile(checkpointer=get_checkpointer())
 
 
 _graph = None
@@ -93,5 +101,10 @@ def get_graph():
     return _graph
 
 
-def ask(question: str) -> AgentState:
-    return get_graph().invoke({"question": question, "reasoning_log": [], "retry_count": 0})
+def ask(question: str, thread_id: str | None = None, use_jev: bool = False) -> AgentState:
+    thread_id = thread_id or str(uuid.uuid4())
+    run_config = {"configurable": {"thread_id": thread_id}, "run_name": "ask_question"}
+    return get_graph().invoke(
+        {"question": question, "reasoning_log": [], "decision_log": [], "retry_count": 0, "use_jev": use_jev},
+        run_config,
+    )

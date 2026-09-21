@@ -162,5 +162,10 @@ def render_billing_tab() -> None:
         st.markdown(f"#### Contract detail: {st.session_state.get('billing_selected_contract')}")
         if "error" in drilldown:
             render_error_card(drilldown["question"], drilldown["error"])
+        elif "interrupt" in drilldown:
+            # Contract-detail questions never trigger human_approval_gate in practice (that's
+            # only reachable via a disruption simulation), but degrade gracefully instead of
+            # crashing on a missing "state" key if that ever changes.
+            st.caption("⚠️ This lookup unexpectedly needs approval - use the Ask a Question tab to resolve it.")
         else:
             render_answer_card(drilldown["state"])

@@ -29,6 +29,19 @@ NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
 
 POSTGRES_URL = os.getenv("POSTGRES_URL", "")
 
+# Optional (build step 8): TypeSafe AI's Jev fast/cheap typed-decision model, used as a
+# swappable alternative to a full LLM call for classify_query's routing decision. The app
+# never depends on this being set - decision_engine.py falls back to the normal Claude/Groq
+# path on any error, including a missing key.
+TYPESAFE_API_KEY = os.getenv("TYPESAFE_API_KEY", "")
+TYPESAFE_MODEL = os.getenv("TYPESAFE_MODEL", "jev-latest")
+
+# Optional (build step 8): LangSmith tracing. LangSmith's own SDK reads LANGSMITH_TRACING/
+# LANGSMITH_API_KEY/LANGSMITH_PROJECT directly from the environment (populated by load_dotenv()
+# above), so no wiring is needed here beyond exposing the on/off state for the sidebar caption.
+LANGSMITH_TRACING_ENABLED = os.getenv("LANGSMITH_TRACING", "false").lower() == "true"
+LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT", "supply-chain-digital-twin")
+
 # The seed data was authored as of this date (see docs/data_reference.md). We
 # pin "today" to this value everywhere the agent reasons about relative dates
 # (contract expiry windows, "this month", etc.) so the demo stays internally

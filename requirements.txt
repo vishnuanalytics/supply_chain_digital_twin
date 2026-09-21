@@ -1,5 +1,8 @@
 langgraph
 langgraph-checkpoint-postgres
+psycopg[binary]
+langsmith
+typesafe-sdk
 anthropic
 openai
 neo4j

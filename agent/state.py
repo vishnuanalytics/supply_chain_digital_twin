@@ -31,9 +31,22 @@ class AgentState(TypedDict, total=False):
     validation_feedback: Optional[str]
     retry_count: int
 
+    # read by classify_query/human_approval_gate; set once at graph invocation from the UI's
+    # "Use Jev for fast decisions" toggle (see agent/decision_engine.py)
+    use_jev: Optional[bool]
+
+    # set by human_approval_gate when a high-stakes recommendation was found and (dis)approved;
+    # both stay None for the (overwhelming majority of) questions with no such recommendation
+    pending_action: Optional[dict]
+    action_decision: Optional[dict]  # {"approved": bool, "note": str}
+
     # set by synthesize
     answer: Optional[str]
     confidence: Optional[str]  # high | estimated | low
 
     # appended to by every node: {node, provider, model, latency_ms, ...}
     reasoning_log: Annotated[list[dict], operator.add]
+
+    # appended to by classify_query (and human_approval_gate's pre-checks, if any) whenever a
+    # decision-engine-eligible choice was made: {decision, value, confidence, engine_used, latency_ms}
+    decision_log: Annotated[list[dict], operator.add]
