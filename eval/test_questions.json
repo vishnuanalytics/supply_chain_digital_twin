@@ -1,0 +1,189 @@
+[
+  {
+    "id": "scenario_01_disruption",
+    "scenario": "disruption_impact",
+    "question": "Our aluminum supplier just had a 3-week delay. What's affected?",
+    "checks": {
+      "confidence_in": ["high", "estimated"],
+      "must_include_all": ["RM3", "RM4"],
+      "must_include_any": ["P1", "P2", "P3", "P4", "P5"]
+    },
+    "ground_truth_note": "Titan Aluminum Works (S2) supplies RM3 + RM4; RM3 -> P1,P2, RM4 -> P3,P4,P5."
+  },
+  {
+    "id": "scenario_02_single_point_of_failure",
+    "scenario": "single_point_of_failure",
+    "question": "Which raw materials have only one supplier?",
+    "checks": {
+      "confidence_in": ["high"],
+      "must_include_all": ["RM2", "RM4", "RM5", "RM6", "RM7", "RM8", "RM10"],
+      "must_exclude": ["RM1", "RM3", "RM9"]
+    },
+    "ground_truth_note": "Verified via Cypher: exactly these 7 raw materials have SOURCED_FROM count = 1."
+  },
+  {
+    "id": "scenario_03_capacity_feasibility",
+    "scenario": "capacity_feasibility",
+    "question": "Can we fulfill a 500-unit order for SUV Suspension Kit by next month?",
+    "checks": {
+      "must_include_any": ["Yes", "yes", "feasible"],
+      "must_exclude": ["cannot", "not feasible", "unable"]
+    },
+    "ground_truth_note": "P4 capacity 600/wk, ~30d window => ~2571 theoretical, 454 open backlog => ~2117 available >> 500."
+  },
+  {
+    "id": "scenario_04_cost_impact",
+    "scenario": "cost_impact_simulation",
+    "question": "If steel prices rise 15%, how does that affect margins?",
+    "checks": {
+      "confidence_in": ["high", "estimated"],
+      "must_include_any": ["RM1", "RM2", "Hot-Rolled Steel", "Steel Rod"],
+      "must_include_any_2": ["selling price", "not modeled", "margin %", "cannot compute", "isn't modeled"]
+    },
+    "ground_truth_note": "Steel is ambiguous between RM1 and RM2; system must honestly note margin % isn't computable (no selling-price data)."
+  },
+  {
+    "id": "scenario_05_supplier_comparison",
+    "scenario": "supplier_comparison",
+    "question": "Compare sourcing options for Aluminum Alloy Billet across suppliers.",
+    "checks": {
+      "confidence_in": ["high"],
+      "must_include_all": ["Titan Aluminum Works", "Diversified Metals"],
+      "must_include_any": ["2.4", "2.65", "25", "40"]
+    },
+    "ground_truth_note": "RM3 primary S2 (25d, $2.40), backup S6 (40d, $2.65)."
+  },
+  {
+    "id": "scenario_06_backup_supplier",
+    "scenario": "second_supplier_lookup",
+    "question": "Find a backup supplier for aluminum alloy billet.",
+    "checks": {
+      "confidence_in": ["high"],
+      "must_include_any": ["Diversified Metals", "S6"]
+    },
+    "ground_truth_note": "RM3's backup supplier is S6 (Diversified Metals & Materials Inc)."
+  },
+  {
+    "id": "scenario_07_invoice_mismatch",
+    "scenario": "invoice_po_mismatch",
+    "question": "Which invoices don't match their purchase order or shipment?",
+    "checks": {
+      "confidence_in": ["high"],
+      "must_include_all": ["INV0012", "INV0061"]
+    },
+    "ground_truth_note": "Verified via SQL: exactly INV0012 (C2) and INV0061 (C8) have status='mismatch'."
+  },
+  {
+    "id": "scenario_08_contract_expiry",
+    "scenario": "contract_expiry",
+    "question": "Which supplier contracts expire in the next 90 days?",
+    "checks": {
+      "confidence_in": ["high"],
+      "must_include_all": ["C2", "C3", "C6", "C10"]
+    },
+    "ground_truth_note": "Verified via SQL against DEMO_REFERENCE_DATE 2026-09-21 + 90 days."
+  },
+  {
+    "id": "scenario_09_supplier_history",
+    "scenario": "supplier_history",
+    "question": "Show our contract and shipment history with Great Lakes Steel Co.",
+    "checks": {
+      "confidence_in": ["high", "estimated"],
+      "must_include_all": ["C1"],
+      "must_include_any": ["C0a", "C2"]
+    },
+    "ground_truth_note": "S1 has current contract C1 (RM1), expiring-soon C2 (RM2), and expired-previous C0a (RM1) - continuity across renewal."
+  },
+  {
+    "id": "scenario_10_billing_summary",
+    "scenario": "billing_summary",
+    "question": "What's our total outstanding balance across active contracts this month?",
+    "checks": {
+      "confidence_in": ["high"],
+      "must_include_any": ["501,249.99", "501249.99"]
+    },
+    "ground_truth_note": "Verified via SQL: sum(amount_due-amount_paid) for Sep 2026 billing across non-expired contracts = 501249.99."
+  },
+  {
+    "id": "scenario_11_delayed_shipment_penalty",
+    "scenario": "delayed_shipment_vs_penalty",
+    "question": "Are any shipments delayed against contracts with penalty clauses?",
+    "checks": {
+      "confidence_in": ["high"],
+      "must_include_all": ["SHIP0004", "SHIP0025", "SHIP0052", "SHIP0056"]
+    },
+    "ground_truth_note": "Verified via SQL: exactly these 4 shipments are status='delayed' with penalty_clause=true."
+  },
+  {
+    "id": "scenario_12_warehouse_restock_no_action",
+    "scenario": "warehouse_dealer_stock",
+    "question": "Which warehouse should restock Great Lakes Auto Parts, and what's in transit?",
+    "checks": {
+      "must_include_all": ["WH1", "WH2"],
+      "must_include_any": ["no restock", "sufficient", "don't need", "not below", "above", "no item"]
+    },
+    "ground_truth_note": "D1 is supplied by WH1+WH2; neither has any item below reorder point - correct answer is 'no restock needed'."
+  },
+  {
+    "id": "edge_01_legitimate_empty_result",
+    "scenario": "edge_case",
+    "question": "Find a backup supplier for copper wire.",
+    "checks": {
+      "confidence_in": ["high"],
+      "must_include_any": ["no backup", "none", "not on file", "no alternate", "no approved"]
+    },
+    "ground_truth_note": "RM7 (Copper Wire) has no BACKUP_FOR edge - a correct 'none exist' answer should still be high confidence, not low."
+  },
+  {
+    "id": "edge_02_out_of_domain_question",
+    "scenario": "edge_case",
+    "question": "What's the weather like today?",
+    "checks": {
+      "confidence_in": ["low", "estimated"],
+      "must_exclude": ["sunny", "rain", "degrees", "forecast"]
+    },
+    "ground_truth_note": "Out-of-domain question - system should decline gracefully rather than hallucinate a real weather answer."
+  },
+  {
+    "id": "variant_01_disruption_rephrased",
+    "scenario": "single_point_of_failure",
+    "question": "Are there any raw materials that depend on just one supplier?",
+    "checks": {
+      "confidence_in": ["high"],
+      "must_include_all": ["RM2", "RM4", "RM5", "RM6", "RM7", "RM8", "RM10"]
+    },
+    "ground_truth_note": "Rephrasing of scenario_02 - same expected ID set, tests robustness to phrasing."
+  },
+  {
+    "id": "variant_02_contract_expiry_30_days",
+    "scenario": "contract_expiry",
+    "question": "Which contracts expire in the next 30 days?",
+    "checks": {
+      "confidence_in": ["high"],
+      "must_include_all": ["C2", "C10"],
+      "must_exclude": ["C3", "C6"]
+    },
+    "ground_truth_note": "Tighter 30-day window than scenario_08 - only C2 (Oct 5) and C10 (Oct 1) qualify, not C3 (Nov 15) or C6 (Dec 10)."
+  },
+  {
+    "id": "variant_03_restock_action_needed",
+    "scenario": "warehouse_dealer_stock",
+    "question": "Which warehouse should restock Pacific Coast Parts, and what's in transit?",
+    "checks": {
+      "must_include_all": ["WH3"],
+      "must_include_any": ["P4", "SUV Suspension"]
+    },
+    "ground_truth_note": "D4 is supplied only by WH3, and P4 is below reorder point there (60.08 < 117.50) - contrasting positive case to scenario_12's 'no action needed'."
+  },
+  {
+    "id": "variant_04_disruption_different_supplier",
+    "scenario": "disruption_impact",
+    "question": "Great Lakes Steel Co had a fire and can't ship for a month. What's affected?",
+    "checks": {
+      "confidence_in": ["high", "estimated"],
+      "must_include_any": ["RM1", "RM2"],
+      "must_include_any_2": ["P1", "P2", "P3", "P4"]
+    },
+    "ground_truth_note": "S1 supplies RM1+RM2; downstream products via Cypher traversal are P1,P2,P3,P4."
+  }
+]
