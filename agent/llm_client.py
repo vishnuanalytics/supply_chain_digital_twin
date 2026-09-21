@@ -21,6 +21,12 @@ class ProviderError(Exception):
     pass
 
 
+class EmptyContentError(ProviderError):
+    """Raised when a provider returns a 200 with no usable content. Observed as a
+    transient blip (a same-provider retry usually succeeds immediately after), unlike a
+    missing key or rate limit which won't be fixed by retrying the same provider."""
+
+
 def _call_groq(system: str, user: str, max_tokens: int) -> tuple[str, str]:
     from openai import OpenAI
 
@@ -112,17 +118,24 @@ def complete(system: str, user: str, max_tokens: int = 1024) -> LLMResult:
         if fn is None:
             errors.append(f"{provider}: unknown provider")
             continue
-        t0 = time.monotonic()
-        try:
-            content, model = fn(system, user, max_tokens)
-            if not content or not content.strip():
-                # Some (esp. reasoning) models can burn the whole token budget on a
-                # hidden reasoning channel and return no visible answer. Treat that
-                # as a failure of this provider rather than an empty "success".
-                raise ProviderError(f"{provider} ({model}) returned empty content")
-            latency_ms = (time.monotonic() - t0) * 1000
-            return LLMResult(content=content, provider=provider, model=model, latency_ms=round(latency_ms, 1))
-        except Exception as exc:  # noqa: BLE001 - deliberately broad, this is a fallback chain
-            errors.append(f"{provider}: {type(exc).__name__}: {exc}")
-            continue
+
+        # Empty content has been observed to be a transient blip (an immediate retry
+        # against the same provider usually succeeds), unlike a missing key or rate
+        # limit which won't be fixed by retrying — so only that error gets a same-
+        # provider retry before this provider is given up on for good.
+        for attempt in range(2):
+            t0 = time.monotonic()
+            try:
+                content, model = fn(system, user, max_tokens)
+                if not content or not content.strip():
+                    raise EmptyContentError(f"{provider} ({model}) returned empty content")
+                latency_ms = (time.monotonic() - t0) * 1000
+                return LLMResult(content=content, provider=provider, model=model, latency_ms=round(latency_ms, 1))
+            except EmptyContentError as exc:
+                if attempt == 0:
+                    continue  # one immediate retry against the same provider
+                errors.append(f"{provider}: {type(exc).__name__}: {exc} (after retry)")
+            except Exception as exc:  # noqa: BLE001 - deliberately broad, this is a fallback chain
+                errors.append(f"{provider}: {type(exc).__name__}: {exc}")
+                break  # not a transient-empty-content case, move on to the next provider
     raise RuntimeError(f"All LLM providers failed: {'; '.join(errors)}")
