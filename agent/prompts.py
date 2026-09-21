@@ -19,6 +19,17 @@ Classify the user's question into exactly one query_type:
 - "compound_multi_hop": needs both the graph (relationships) AND transactional data
   (inventory/billing/etc.) together to answer, and isn't a what-if simulation.
 
+IMPORTANT: PostgreSQL has NO name columns at all (no supplier/dealer/product name — only IDs like
+'S1', 'D4', 'P2'). If the question names an entity (a supplier, dealer, product, material) BY
+NAME rather than by ID, and answering requires filtering Postgres data by that entity, you MUST
+classify it as "compound_multi_hop" — even if the actual data ends up coming entirely from
+Postgres — so the graph gets queried first to resolve that name to its ID. Postgres query
+generation has no way to look up a name on its own; a "contract_status"/"inventory_lookup"/
+"cost_analysis" classification for a named entity leaves it stuck with no way to resolve the ID,
+and retrying the same classification will never fix that. Only use those three types when the
+question already gives an ID directly, or doesn't need to filter by any specific named entity at
+all (e.g. "which contracts expire in 90 days" names no supplier, so contract_status is correct).
+
 Separately, decide requires_simulation = true whenever answering well requires projecting
 downstream impact rather than just looking up facts — this includes both explicit what-ifs AND
 real events described in the question (e.g. "our aluminum supplier just had a 3-week delay" is
@@ -64,6 +75,15 @@ Q: "If steel prices rise 15%, how does that affect margins?"
 Q: "Which raw materials have only one supplier?"
 {{"query_type": "graph_traversal", "requires_simulation": false, "simulation_type": null,
   "simulation_params": {{}}, "reasoning": "pure structural graph question"}}
+
+Q: "Show our contract and shipment history with Great Lakes Steel Co."
+{{"query_type": "compound_multi_hop", "requires_simulation": false, "simulation_type": null,
+  "simulation_params": {{}},
+  "reasoning": "names a supplier by name, not ID; Postgres has no name column, so the graph must resolve 'Great Lakes Steel Co' -> its supplier_id before contracts/shipments can be filtered, even though the actual answer is all Postgres data"}}
+
+Q: "Which supplier contracts expire in the next 90 days?"
+{{"query_type": "contract_status", "requires_simulation": false, "simulation_type": null,
+  "simulation_params": {{}}, "reasoning": "no specific supplier named, pure Postgres date filter"}}
 
 Respond with ONLY a JSON object in this exact shape, no markdown fences, no explanation:
 {{"query_type": "...", "requires_simulation": false, "simulation_type": null,
