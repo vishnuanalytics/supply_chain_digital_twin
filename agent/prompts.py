@@ -280,4 +280,11 @@ def synthesize_user_prompt(state: dict) -> str:
         parts.append(f"SQL query error: {state['postgres_error']}")
     if state.get("simulation_result"):
         parts.append(f"Simulation result: {state['simulation_result']}")
+    if state.get("validation_passed") is False:
+        parts.append(
+            "Note: automated validation rejected this data on every retry attempt (last reason: "
+            f"{state.get('validation_feedback')!r}), and the pipeline gave up after its retry limit "
+            "rather than confirming a clean result. Treat this as unconfirmed — if the data still "
+            "looks reasonable, use 'estimated' confidence at most, not 'high'."
+        )
     return "\n\n".join(parts)
