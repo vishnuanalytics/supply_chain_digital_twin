@@ -68,9 +68,10 @@ def run(test_cases: list[dict], sleep_seconds: float) -> list[dict]:
             state = ask(case["question"])
             answer = state.get("answer") or ""
             confidence = state.get("confidence")
+            reasoning_log = state.get("reasoning_log", [])
             error = None
         except Exception as exc:  # noqa: BLE001 - a crash is itself a failure to record, not to raise
-            answer, confidence, error = "", None, str(exc)
+            answer, confidence, reasoning_log, error = "", None, [], str(exc)
         latency_s = round(time.monotonic() - t0, 1)
 
         failures = [f"agent raised an exception: {error}"] if error else check_answer(answer, confidence, case["checks"])
@@ -85,6 +86,10 @@ def run(test_cases: list[dict], sleep_seconds: float) -> list[dict]:
             "latency_s": latency_s,
             "answer": answer,
             "failures": failures,
+            # kept for post-hoc debugging of a failure without needing to re-run the
+            # question (each entry has node/engine_used/model/latency_ms + node-specific
+            # detail like cypher_query/sql_query/valid/reason)
+            "reasoning_log": reasoning_log,
         })
 
         icon = "PASS" if passed else "FAIL"
