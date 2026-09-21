@@ -157,6 +157,51 @@ checkpointer, and the Jev decision-engine toggle.
 
 ## Deploying
 
-The fastest option is [Streamlit Community Cloud](https://streamlit.io/cloud):
-point it at this repo, set `app.py` as the entrypoint, and add the same
-environment variables from `.env` as Streamlit secrets.
+The fastest option is [Streamlit Community Cloud](https://streamlit.io/cloud),
+which builds and hosts straight from this GitHub repo for free. The app's
+config code (`agent/config.py`) reads everything via `os.getenv(...)`, and
+`app.py` bridges Streamlit Cloud's `st.secrets` into `os.environ` at startup
+(a no-op locally, where config keeps coming from `.env` as usual), so no code
+changes are needed between local and deployed.
+
+1. Push this repo to GitHub (already done if you're reading this on GitHub).
+2. Go to [share.streamlit.io](https://share.streamlit.io) and sign in with
+   GitHub.
+3. Click **New app**, then pick:
+   - **Repository**: `vishnuanalytics/supply_chain_digital_twin`
+   - **Branch**: `main`
+   - **Main file path**: `app.py`
+4. Before deploying, open **Advanced settings → Secrets** and paste in the
+   block below, filling in each value from your own local `.env` (never
+   commit or share those real values — this template only shows the shape):
+
+   ```toml
+   LLM_PROVIDER_ORDER = "groq,openrouter,anthropic"
+
+   GROQ_API_KEY = "your-groq-key"
+   GROQ_MODEL = "openai/gpt-oss-120b"
+
+   OPENROUTER_API_KEY = "your-openrouter-key"
+   OPENROUTER_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+
+   ANTHROPIC_API_KEY = "your-anthropic-key"
+   ANTHROPIC_MODEL = "claude-sonnet-5"
+
+   NEO4J_URI = "neo4j+s://your-instance.databases.neo4j.io"
+   NEO4J_USERNAME = "neo4j"
+   NEO4J_PASSWORD = "your-neo4j-password"
+   NEO4J_DATABASE = "your-aura-database-id"
+
+   POSTGRES_URL = "postgresql://user:password@host/dbname?sslmode=require"
+
+   DEMO_REFERENCE_DATE = "2026-09-21"
+   ```
+
+5. Click **Deploy**. The first build takes a few minutes (installing
+   `requirements.txt`); after that, pushes to `main` auto-redeploy.
+6. Once it's live, sanity-check the sidebar shows real Neo4j node/relationship
+   counts (confirms the DB creds and the secrets bridge both worked), then ask
+   a question from the **Ask a Question** tab to confirm at least one LLM
+   provider is reachable from Streamlit Cloud's network.
+
+`.python-version` pins the build to Python 3.12 to match local development.
