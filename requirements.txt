@@ -1,8 +1,7 @@
 langgraph
 langgraph-checkpoint-postgres
-langchain
-langchain-anthropic
 anthropic
+openai
 neo4j
 psycopg2-binary
 sqlalchemy
