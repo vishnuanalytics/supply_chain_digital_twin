@@ -25,6 +25,12 @@ class AgentState(TypedDict, total=False):
     # set by simulate_scenario
     simulation_result: Optional[dict[str, Any]]
 
+    # set by validate_results; feedback (if any) is read back by classify_query/query_neo4j/
+    # query_postgres on a retry so the regenerated query actually tries something different
+    validation_passed: bool
+    validation_feedback: Optional[str]
+    retry_count: int
+
     # set by synthesize
     answer: Optional[str]
     confidence: Optional[str]  # high | estimated | low

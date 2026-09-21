@@ -71,8 +71,15 @@ Respond with ONLY a JSON object in this exact shape, no markdown fences, no expl
 """
 
 
-def classify_user_prompt(question: str) -> str:
-    return f"Question: {question}"
+def classify_user_prompt(question: str, feedback: str | None = None) -> str:
+    prompt = f"Question: {question}"
+    if feedback:
+        prompt += (
+            f"\n\nNote: a previous attempt at this question was rejected for this reason: "
+            f"{feedback}\nPick a different query_type/simulation_type or note this so the next "
+            f"query-generation step avoids repeating that mistake."
+        )
+    return prompt
 
 
 CYPHER_SYSTEM = f"""You write read-only Cypher queries against a Neo4j supply chain graph.
@@ -91,8 +98,14 @@ Rules:
 """
 
 
-def cypher_user_prompt(question: str) -> str:
-    return f"Question: {question}\n\nWrite the Cypher query."
+def cypher_user_prompt(question: str, feedback: str | None = None) -> str:
+    prompt = f"Question: {question}\n\nWrite the Cypher query."
+    if feedback:
+        prompt += (
+            f"\n\nNote: a previous attempt was rejected for this reason: {feedback}\n"
+            f"Write a different, corrected query that avoids that specific problem."
+        )
+    return prompt
 
 
 SQL_SYSTEM = f"""You write read-only PostgreSQL SELECT queries against the schema below.
@@ -141,14 +154,63 @@ part; correct query:
 """
 
 
-def sql_user_prompt(question: str, neo4j_context: str | None = None) -> str:
+def sql_user_prompt(question: str, neo4j_context: str | None = None, feedback: str | None = None) -> str:
     prompt = f"Question: {question}\n\nWrite the SQL query."
     if neo4j_context:
         prompt += (
             f"\n\nGraph context (you MUST scope your query to these specific IDs, not query "
             f"globally):\n{neo4j_context}"
         )
+    if feedback:
+        prompt += (
+            f"\n\nNote: a previous attempt was rejected for this reason: {feedback}\n"
+            f"Write a different, corrected query that avoids that specific problem."
+        )
     return prompt
+
+
+VALIDATE_SYSTEM = f"""You are a quality gate in a supply chain Q&A pipeline. Today's date is
+{TODAY}. You are given a question, the query that was run to answer it, and what it returned.
+Decide whether that result is good enough to answer the question, or whether the query needs to
+be regenerated.
+
+Mark valid = false when:
+- The result is clearly the wrong shape for the question (e.g. asked "which supplier" but got
+  back raw material rows with no supplier info).
+- The result is empty AND there's a specific, plausible reason to suspect the query itself was
+  wrong (e.g. it filtered on an exact name where the question used a nickname/partial name, or
+  filtered a boolean/enum backwards) — not just "empty could theoretically mean anything".
+- The result contradicts something explicitly stated in the question (e.g. asks about material X
+  but the returned rows are all for a different material).
+
+Mark valid = true when:
+- The result plausibly answers the question, including a genuine "zero results" answer (e.g. "no
+  backup supplier on file" or "no invoices are mismatched" are often correct, real answers, not
+  failures — don't invent a reason to distrust an empty result you have no specific evidence
+  against).
+- The result is a reasonable partial answer to a multi-part question (synthesize will handle
+  caveating the unanswered part appropriately).
+
+Bias toward valid = true when you aren't sure — retries cost time and money, so only fail a
+result when you can name a concrete, specific problem with it, not a vague feeling that it looks
+thin.
+
+Respond with ONLY a JSON object, no markdown fences:
+{{"valid": true, "reason": "one short sentence"}}
+"""
+
+
+def validate_user_prompt(state: dict) -> str:
+    parts = [f"Question: {state.get('question')}", f"Query type: {state.get('query_type')}"]
+    if state.get("cypher_query"):
+        parts.append(f"Cypher query run:\n{state['cypher_query']}")
+        parts.append(f"Graph result ({len(state.get('neo4j_result') or [])} rows): {state.get('neo4j_result')}")
+    if state.get("sql_query"):
+        parts.append(f"SQL query run:\n{state['sql_query']}")
+        parts.append(f"SQL result ({len(state.get('postgres_result') or [])} rows): {state.get('postgres_result')}")
+    if state.get("simulation_result"):
+        parts.append(f"Simulation result: {state['simulation_result']}")
+    return "\n\n".join(parts)
 
 
 SYNTHESIZE_SYSTEM = f"""You are a supply chain analyst assistant. Today's date is {TODAY}.
@@ -162,11 +224,17 @@ paraphrase that field directly rather than re-deriving the comparison yourself f
 numbers — you are more likely to make an arithmetic slip than the code that computed it.
 
 Assign a confidence level:
-- "high": the data directly and completely answers the question with no caveats needed.
+- "high": the data directly and completely answers the question with no caveats needed. A query
+  that ran cleanly and came back EMPTY is often still "high" — an empty result is frequently a
+  definite, complete answer in itself (e.g. "no backup supplier is on file" / "no invoices are
+  mismatched" is exactly as confident an answer as finding one, when the query ran without error
+  and validate_results already accepted the empty result as plausible). Don't confuse "the answer
+  is none" with "we don't know the answer" — only the latter is low confidence.
 - "estimated": you were able to give solid, data-backed numbers, but either the method involved
   simulation/approximation, or a related sub-part of the question (e.g. margin % when only cost
   data exists) has a known, honestly-stated gap — the core answer is still trustworthy.
-- "low": the data was empty, errored, or the question could not be meaningfully answered at all.
+- "low": the question could not be meaningfully answered at all — e.g. a query errored, or you
+  could not find data relevant to what was actually asked (not just "the count happens to be 0").
 Don't downgrade to "low" just because a note or limitation was included — a well-caveated,
 data-backed answer is "estimated", not "low". But if the question has multiple parts and ANY
 part hit an actual query error or returned nothing useful, the overall confidence must be "low"

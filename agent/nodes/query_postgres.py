@@ -10,7 +10,9 @@ def query_postgres_node(state: AgentState) -> dict:
 
     result = llm_client.complete(
         system=prompts.SQL_SYSTEM,
-        user=prompts.sql_user_prompt(state["question"], neo4j_context=neo4j_context),
+        user=prompts.sql_user_prompt(
+            state["question"], neo4j_context=neo4j_context, feedback=state.get("validation_feedback")
+        ),
         max_tokens=500,
     )
     sql = strip_code_fence(result.content)

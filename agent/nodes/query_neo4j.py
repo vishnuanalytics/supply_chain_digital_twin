@@ -6,7 +6,7 @@ from ..utils import strip_code_fence
 def query_neo4j_node(state: AgentState) -> dict:
     result = llm_client.complete(
         system=prompts.CYPHER_SYSTEM,
-        user=prompts.cypher_user_prompt(state["question"]),
+        user=prompts.cypher_user_prompt(state["question"], feedback=state.get("validation_feedback")),
         max_tokens=500,
     )
     cypher = strip_code_fence(result.content)

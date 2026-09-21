@@ -11,7 +11,7 @@ VALID_SIMULATION_TYPES = {"disruption", "capacity", "cost_impact", None}
 def classify_query(state: AgentState) -> dict:
     result = llm_client.complete(
         system=prompts.CLASSIFY_SYSTEM,
-        user=prompts.classify_user_prompt(state["question"]),
+        user=prompts.classify_user_prompt(state["question"], feedback=state.get("validation_feedback")),
         max_tokens=400,
     )
 
@@ -36,6 +36,16 @@ def classify_query(state: AgentState) -> dict:
         "requires_simulation": requires_simulation,
         "simulation_type": simulation_type,
         "simulation_params": simulation_params,
+        # Clear any previous attempt's data so a retry down a different path (e.g. Postgres
+        # instead of Neo4j) never leaves stale results for validate_results/synthesize to see.
+        "cypher_query": None,
+        "neo4j_result": None,
+        "neo4j_error": None,
+        "sql_query": None,
+        "postgres_result": None,
+        "postgres_error": None,
+        "simulation_result": None,
+        "validation_passed": True,
         "reasoning_log": [{
             "node": "classify_query",
             "engine_used": result.provider,
