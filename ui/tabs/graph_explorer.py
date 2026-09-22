@@ -54,8 +54,8 @@ def _filtered_graph(nodes, edges, selected_labels):
 def render_graph_explorer_tab() -> None:
     st.markdown("### Graph Explorer")
     st.caption(
-        "Filter by entity type below, or click any node to zoom into just its direct "
-        "connections. Drag nodes around, scroll to zoom."
+        "Filter by entity type below, or click any node to zoom into its connections "
+        "(pick how many hops out once focused). Drag nodes around, scroll to zoom."
     )
 
     all_labels = list(LABEL_COLORS.keys())
@@ -89,19 +89,26 @@ def render_graph_explorer_tab() -> None:
     view_gen = st.session_state.setdefault("graph_view_gen", 0)
 
     if focus_id:
-        focus_nodes, focus_edges, focus_name = fetch_node_neighborhood(focus_id)
+        col1, col2, col3 = st.columns([3, 2, 1.2])
+        hops = col2.segmented_control(
+            "Hops", [1, 2, 3], default=2, key="graph_hops",
+            format_func=lambda h: f"{h} hop" + ("s" if h > 1 else ""),
+        ) or 1
+        focus_nodes, focus_edges, focus_name = fetch_node_neighborhood(focus_id, hops=hops)
         if not focus_name:
             st.session_state["graph_focus_node"] = None
             st.rerun()
-        col1, col2 = st.columns([5, 1])
-        col1.markdown(f"**Focused on: {focus_name}** — showing its direct connections only.")
-        if col2.button("← Full graph", width="stretch"):
+        col1.markdown(
+            f"**Focused on: {focus_name}** — showing connections up to {hops} "
+            f"hop{'s' if hops > 1 else ''} out."
+        )
+        if col3.button("← Full graph", width="stretch"):
             st.session_state["graph_focus_node"] = None
             st.session_state["graph_view_gen"] += 1
             st.rerun()
         clicked = keyed_agraph(
             nodes=focus_nodes, edges=focus_edges, config=default_config(height=600, width=1300),
-            key=f"graph_explorer_{view_gen}",
+            key=f"graph_explorer_{view_gen}_{hops}",
         )
         caption = f"{len(focus_nodes)} nodes · {len(focus_edges)} relationships in this view"
     else:

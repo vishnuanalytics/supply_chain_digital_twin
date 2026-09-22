@@ -83,49 +83,81 @@ def fetch_full_graph() -> tuple[list[Node], list[Edge]]:
     return nodes, edges
 
 
-def fetch_node_neighborhood(node_id: str) -> tuple[list[Node], list[Edge], str | None]:
+_MAX_HOPS = 3
+
+
+def fetch_node_neighborhood(node_id: str, hops: int = 1) -> tuple[list[Node], list[Edge], str | None]:
     """Ego view for the Graph Explorer's click-to-focus: the clicked node (large, full
-    color) plus every node directly connected to it (normal size, colored by their own
-    type), so exploring the graph feels like drilling into one entity at a time instead
-    of always staring at the full 66-node hairball. Returns (nodes, edges, focus_name).
+    color) plus everything within `hops` steps of it, so exploring the graph feels like
+    drilling into one entity at a time instead of always staring at the full 66-node
+    hairball. Returns (nodes, edges, focus_name).
+
+    `hops` > 1 matters for chains like Product -[USED_IN]-> IntermediatePart
+    -[USED_IN]-> RawMaterial: at hops=1, clicking the Product only reaches the
+    IntermediatePart, never the RawMaterial feeding it - a real gap reported directly.
+    Two queries, not one: the first finds which nodes are within range (and how far -
+    used to size nodes by proximity to the focus), the second pulls every edge that
+    exists *among* that whole node set - not just the ones touching the focus node
+    directly - so an IntermediatePart -> RawMaterial edge between two non-focus nodes
+    still shows up, not just a hub-and-spoke star out of the center.
+
+    Neo4j doesn't allow a parameter for a variable-length path's hop bound
+    ([*1..$hops] is a syntax error) - it must be a literal int, so `hops` is clamped to
+    a small fixed range (_MAX_HOPS) before being interpolated into the query text,
+    never taken from free-text/LLM input.
     """
-    rows = db.run_cypher(
-        """
+    hops = max(1, min(hops, _MAX_HOPS))
+
+    focus_rows = db.run_cypher(
+        "MATCH (n) WHERE coalesce(n.id, n.contract_id) = $id "
+        "RETURN labels(n)[0] AS label, coalesce(n.name, n.contract_id) AS name",
+        {"id": node_id},
+    )
+    if not focus_rows:
+        return [], [], None
+    focus_name = focus_rows[0]["name"]
+    node_info: dict[str, tuple[str, str, int]] = {node_id: (focus_rows[0]["label"], focus_name, 0)}
+
+    neighbor_rows = db.run_cypher(
+        f"""
         MATCH (n) WHERE coalesce(n.id, n.contract_id) = $id
-        OPTIONAL MATCH (n)-[r]-(m)
-        RETURN labels(n)[0] AS n_label, coalesce(n.id, n.contract_id) AS n_id,
-               coalesce(n.name, n.contract_id) AS n_name,
-               labels(m)[0] AS m_label, coalesce(m.id, m.contract_id) AS m_id,
-               coalesce(m.name, m.contract_id) AS m_name, type(r) AS rel_type,
-               startNode(r) = n AS outgoing
+        MATCH p = (n)-[*1..{hops}]-(m)
+        WITH m, min(length(p)) AS hop_distance
+        RETURN labels(m)[0] AS label, coalesce(m.id, m.contract_id) AS id,
+               coalesce(m.name, m.contract_id) AS name, hop_distance
         """,
         {"id": node_id},
     )
-    if not rows:
-        return [], [], None
+    for row in neighbor_rows:
+        node_info[row["id"]] = (row["label"], row["name"], row["hop_distance"])
 
-    focus_name = rows[0]["n_name"]
-    node_info: dict[str, tuple[str, str]] = {node_id: (rows[0]["n_label"], focus_name)}
-    edges: list[Edge] = []
-
-    for row in rows:
-        if not row["m_id"]:
-            continue
-        node_info.setdefault(row["m_id"], (row["m_label"], row["m_name"]))
-        source, target = (node_id, row["m_id"]) if row["outgoing"] else (row["m_id"], node_id)
-        edges.append(Edge(
-            source=source, target=target, title=row["rel_type"],
-            color=LABEL_COLORS.get(row["n_label"], MUTED_EDGE_COLOR),
-        ))
+    edge_rows = db.run_cypher(
+        """
+        MATCH (a)-[r]->(b)
+        WHERE coalesce(a.id, a.contract_id) IN $ids AND coalesce(b.id, b.contract_id) IN $ids
+        RETURN labels(a)[0] AS a_label, coalesce(a.id, a.contract_id) AS a_id,
+               coalesce(b.id, b.contract_id) AS b_id, type(r) AS rel_type
+        """,
+        {"ids": list(node_info.keys())},
+    )
+    edges = [
+        Edge(
+            source=row["a_id"], target=row["b_id"], title=row["rel_type"],
+            color=LABEL_COLORS.get(row["a_label"], MUTED_EDGE_COLOR),
+        )
+        for row in edge_rows
+    ]
 
     nodes = [
         Node(
             id=nid, label=name, title=f"{label}: {name} ({nid})",
-            size=30 if nid == node_id else 18,
+            # Bigger and more sharply labeled the closer a node is to the clicked one,
+            # so a 2-3 hop view still reads as "centered on X" rather than a flat blob.
+            size=30 if dist == 0 else max(12, 20 - 4 * dist),
             color=LABEL_COLORS.get(label, MUTED_NODE_COLOR),
-            font={"size": 15 if nid == node_id else 12, "color": "#334155"},
+            font={"size": 15 if dist == 0 else max(9, 13 - 2 * dist), "color": "#334155"},
         )
-        for nid, (label, name) in node_info.items()
+        for nid, (label, name, dist) in node_info.items()
     ]
     return nodes, edges, focus_name
 
