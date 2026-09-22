@@ -128,9 +128,9 @@ def inject_css() -> None:
         div[data-testid="stButton"] button:active {{ transform: translateY(0); }}
         /* Pills (used for the Graph Explorer type filter) */
         div[data-testid="stPills"] button {{ border-radius: 999px !important; font-weight: 600; }}
-        /* Tabs */
-        button[data-baseweb="tab"] {{ font-weight: 600; font-size: 0.95rem; }}
-        div[data-baseweb="tab-highlight"] {{ background-color: {ACCENT} !important; height: 3px; }}
+        /* Top navigation (st.navigation(position="top"), replacing the old st.tabs() -
+        real testid confirmed live, not the st.tabs()-era selectors this replaced) */
+        [data-testid="stTopNavLink"] {{ font-weight: 600; font-size: 0.95rem; }}
         /* Chat input + text areas */
         [data-testid="stChatInput"] {{
             border-radius: 12px; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);

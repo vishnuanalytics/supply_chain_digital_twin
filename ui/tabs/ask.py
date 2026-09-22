@@ -93,6 +93,16 @@ def render_ask_tab() -> None:
     st.session_state.setdefault("history", [])
     st.session_state.setdefault("conversation_history", [])
 
+    # Deep-link support: ?q=<question> immediately asks that question, e.g. for sharing
+    # a link straight to a specific answer. Popped from the URL as soon as it's
+    # consumed (not just read) so refreshing the resulting page doesn't re-ask it -
+    # `st.query_params` writes update the address bar without a full page reload, so
+    # this take-effect-once behavior is invisible to the user in the normal case.
+    q_param = st.query_params.get("q")
+    if q_param and "pending_question" not in st.session_state:
+        st.session_state["pending_question"] = q_param
+        del st.query_params["q"]
+
     st.markdown("### Ask a question")
     st.caption(
         "Chat naturally - this is one continuous conversation, so follow-ups like "

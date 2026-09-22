@@ -869,3 +869,89 @@ idempotent). Full `schema.sql` reapplication resets `chat_history`/`action_log` 
 empty, same as every previous schema change this session - expected, not a regression.
 
 158 tests total, all green.
+
+## Real per-page URLs + shareable deep links — 2026-09-22
+
+Direct request: "currently the web app is working with main url there is no sub paths,
+parameters queries. It will improve the web interface." Genuinely two different scopes
+bundled together (real per-page URLs vs. just query-string deep-linking on the existing
+layout), with materially different amounts of work behind them, so asked via
+`AskUserQuestion` before starting - user chose both.
+
+**Why this needed real research, not just writing code:** `st.tabs()` exposes no way
+to read or set which tab is "active" from Python at all - there's no callback, no
+session_state key, nothing. Getting real URLs per tab therefore isn't a small addition,
+it requires migrating off `st.tabs()` entirely to Streamlit's native page-routing
+(`st.navigation`/`st.Page`). Before writing any of the real migration, built a
+throwaway 2-page diagnostic app (deleted after, never committed) to verify three things
+empirically rather than assume from general Streamlit knowledge - the same lesson from
+the graph-trace-visibility bug earlier this session (verify the actual installed
+version's behavior, don't guess):
+
+1. **`position="top"`** on `st.navigation()` renders a horizontal icon+label bar
+   visually very close to the old `st.tabs()` look - confirmed via screenshot before
+   committing to the migration, not assumed from the API signature alone.
+2. **A real, load-bearing platform quirk**: the *default* page's own declared
+   `url_path` (e.g. visiting `/ask` directly) shows a harmless "Page not found -
+   running the app's main page" toast on cold load, even though the content
+   underneath still renders correctly. Only `/` (not the default page's own url_path)
+   is genuinely its canonical URL - confirmed by testing cold-loads of `/`, a non-
+   default page's url_path (clean, zero issue), and the default page's own url_path
+   (toast every time) as three separate cases, not just one. Designed around it: the
+   Ask page is simply not advertised as living at `/ask` anywhere in the app's own UI
+   or docs, just at `/`.
+3. **Query params do NOT survive clicking between pages** via Streamlit's own
+   auto-generated nav links - confirmed by loading `/?session=abc-123` then clicking
+   to Graph Explorer and checking the resulting URL had no `session` param at all.
+   This directly shaped the deep-link design below (see the write-back pattern).
+
+**Migration**: `app.py` replaced its `st.tabs()` block with
+`st.navigation([...], position="top")` + `pg.run()`; each existing `render_*_tab()`
+function became an `st.Page` target completely unchanged (they already took no
+arguments, a direct fit for Streamlit's page-function contract). `render_sidebar()`
+still runs unconditionally before `pg.run()`, exactly as before, so all of its global
+state (Conversations, Model picker, Decision engine) keeps working identically
+regardless of which page is active - confirmed session_state persists across page
+switches within a browser session, same as it always did across tab switches.
+`ui/theme.py`'s dead `st.tabs()`-era CSS (`button[data-baseweb="tab"]`,
+`div[data-baseweb="tab-highlight"]`) replaced with the real confirmed testid
+(`[data-testid="stTopNavLink"]`, found by walking the live DOM, not guessed).
+
+**Deep links, three independent ones, same pattern each time** (peek `st.query_params`
+once at `session_state` init - never on every rerun, so it can't fight a later
+in-session action like "New chat" - then write the CURRENT value back every render so
+the URL stays in sync and the write-back-survives-the-param-clearing-on-navigation
+trick from finding #3 above kicks in):
+- **`?q=<question>`** (`ui/tabs/ask.py`) - auto-submits that question, then `del`s it
+  from `st.query_params` the moment it's consumed (not just read) so a refresh of the
+  resulting URL never re-asks it.
+- **`?session=<uuid>`** (`ui/sidebar.py`) - loads that specific past conversation via
+  the existing `load_chat_session()` instead of starting fresh. Since `_render_
+  conversations()` runs on every single page, this is also what makes the session
+  param "persist across pages" despite Streamlit clearing query params on every
+  navigation (finding #3) - it gets re-asserted before the user ever sees it missing.
+- **`?node=<id>`** (`ui/tabs/graph_explorer.py`) - opens straight into that node's
+  focus view via the existing `graph_focus_node` session_state mechanism. Correctly
+  does NOT persist when navigating to a different page (no re-assertion happens
+  outside Graph Explorer's own page function) - verified live that returning to Graph
+  Explorer after visiting Sales/Ask restores the same focused node, because the
+  underlying session_state itself was never cleared, only the URL momentarily was -
+  the exact same "state survives navigation, URL self-heals" behavior as `?session=`,
+  just page-scoped instead of global. Initially looked like a bug in a live test
+  (clicking "← Full graph" didn't seem to clear `?node=` from the URL within 3
+  seconds) - was actually just this app's real render cycle taking ~5s end to end
+  (live Neo4j round trips), confirmed by polling every second instead of checking once.
+
+5 new tests (`tests/test_deep_links.py`, 163 total) via AppTest, with two real gotchas
+worth remembering for the next test in this style: (1) `AppTest`'s `query_params` is a
+plain dict with **list-valued entries** (real query-string semantics: `{"q": ["value"]}`),
+unlike the real `st.query_params` proxy's single-value convenience (`.get("q")` returns
+`"value"` directly in the live app, `["value"]` in a test) - don't assume the two APIs
+match exactly. (2) mocking the graph-explorer node-focus test by faking
+`agent.db.run_cypher`'s return value (matching this project's usual pattern) doesn't
+work here specifically, because `fetch_full_graph()` runs *before* the new deep-link
+code and would need its own distinct query mocked too, or the whole thing short-
+circuits on `if not all_nodes: return` before ever reaching the code under test -
+simpler and more robust to patch `ui.tabs.graph_explorer.fetch_full_graph`/
+`fetch_node_neighborhood` directly instead of trying to fake every Cypher string they
+issue.

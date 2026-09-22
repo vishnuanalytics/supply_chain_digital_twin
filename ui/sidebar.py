@@ -114,9 +114,25 @@ def load_chat_session(session_id: str) -> None:
 
 
 def _render_conversations() -> None:
-    st.session_state.setdefault("session_id", str(uuid.uuid4()))
+    if "session_id" not in st.session_state:
+        # Deep-link support: ?session=<uuid> on first visit loads that specific past
+        # conversation instead of always starting fresh (a shareable/bookmarkable link
+        # straight to one chat) - only consulted once, at session_state init, not on
+        # every rerun, so it never fights with "New chat"/loading a different session
+        # later in the same browser session.
+        session_param = st.query_params.get("session")
+        if session_param:
+            load_chat_session(session_param)
+        else:
+            new_chat_session()
     st.session_state.setdefault("history", [])
     st.session_state.setdefault("conversation_history", [])
+    # Write-back so the URL always reflects the current session - Streamlit's own page
+    # nav clears query params on every tab switch, but since this runs on every single
+    # page (render_sidebar() is called before pg.run() in app.py, regardless of which
+    # page is active), it re-asserts this param immediately, so it reads as "persists
+    # across tabs" even though it's technically cleared-then-restored on each switch.
+    st.query_params["session"] = st.session_state["session_id"]
 
     st.markdown("### 💬 Conversations")
     if st.button("➕ New chat", width="stretch", key="sidebar_new_chat"):

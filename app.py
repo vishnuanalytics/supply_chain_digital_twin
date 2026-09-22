@@ -25,23 +25,30 @@ from ui.theme import inject_css
 
 st.set_page_config(page_title="Supply Chain Digital Twin", page_icon="🔗", layout="wide")
 inject_css()
-render_sidebar()
 
-tab_ask, tab_graph, tab_billing, tab_sales, tab_about = st.tabs(
-    ["💬 Ask a Question", "🕸️ Graph Explorer", "📄 Contracts & Billing", "📈 Sales", "ℹ️ About / Architecture"]
+# Real per-tab URLs (e.g. /graph-explorer, /sales) instead of one flat URL with no
+# sub-paths - replaces the previous st.tabs() layout. position="top" keeps the same
+# horizontal-bar-of-icons-and-labels look tabs had, just now backed by actual routing
+# (bookmarkable, shareable, browser back/forward all work). Query params survive within
+# a page but are dropped by Streamlit's own nav on every page switch - render_sidebar()
+# below re-asserts the ?session=... deep-link param on every single page (it always
+# runs, regardless of which page is active), so it reads as "persists across tabs" even
+# though it's technically cleared-then-immediately-restored on each switch.
+#
+# Known platform quirk, not a bug in this app: the *default* page's own declared
+# url_path ("ask") shows a harmless "Page not found, running the app's main page" toast
+# if visited directly - only "/" (not "/ask") is that page's real canonical URL.
+# Confirmed live: content still renders correctly either way, and every OTHER page's
+# url_path works with zero issue. Documented in docs/development_log.md.
+pg = st.navigation(
+    [
+        st.Page(render_ask_tab, title="Ask a Question", icon="💬", url_path="ask", default=True),
+        st.Page(render_graph_explorer_tab, title="Graph Explorer", icon="🕸️", url_path="graph-explorer"),
+        st.Page(render_billing_tab, title="Contracts & Billing", icon="📄", url_path="billing"),
+        st.Page(render_sales_tab, title="Sales", icon="📈", url_path="sales"),
+        st.Page(render_about_tab, title="About / Architecture", icon="ℹ️", url_path="about"),
+    ],
+    position="top",
 )
-
-with tab_ask:
-    render_ask_tab()
-
-with tab_graph:
-    render_graph_explorer_tab()
-
-with tab_billing:
-    render_billing_tab()
-
-with tab_sales:
-    render_sales_tab()
-
-with tab_about:
-    render_about_tab()
+render_sidebar()
+pg.run()

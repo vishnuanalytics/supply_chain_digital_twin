@@ -85,7 +85,21 @@ def render_graph_explorer_tab() -> None:
         st.markdown('<div class="scdt-empty-state">The graph is empty.</div>', unsafe_allow_html=True)
         return
 
+    if "graph_focus_node" not in st.session_state:
+        # Deep-link support: ?node=<id> on first visit opens straight into that node's
+        # focus view (e.g. a shareable link to "here's RM3's neighborhood") - only
+        # consulted once, at session_state init, same reasoning as the sidebar's
+        # ?session= handling.
+        st.session_state["graph_focus_node"] = st.query_params.get("node")
     focus_id = st.session_state.get("graph_focus_node")
+    # Keep the URL in sync with the current focus (or lack of one) - Streamlit's own
+    # page nav clears query params on every tab switch, so this simply won't be
+    # re-added when the user is on a different tab, which is correct (no reason a
+    # /sales URL should carry a leftover ?node= from Graph Explorer).
+    if focus_id:
+        st.query_params["node"] = focus_id
+    else:
+        st.query_params.pop("node", None)
     # Bumped on every transition into or out of focus mode, and folded into the
     # component's key below, so each view is a genuinely fresh component instance -
     # otherwise switching views would keep replaying whatever node was last clicked
