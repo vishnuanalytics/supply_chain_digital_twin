@@ -11,6 +11,37 @@ from ui.theme import LABEL_COLORS
 _COLOR_TO_LABEL = {color: label for label, color in LABEL_COLORS.items()}
 
 
+def _pill_colors_css() -> str:
+    """Colors each type-filter pill to match its entity type's actual node color (so
+    "Facility" looks like the blue Facility nodes, etc.) - st.pills has no per-option
+    color option, and CSS can't select a <button> by its text content, so this targets
+    each pill purely by its position, which is safe because the pills are always
+    rendered in LABEL_COLORS's fixed iteration order. Scoped to this widget's own
+    `st-key-*` class (a class Streamlit derives from the `key=` we pass it) so it can
+    never bleed into some other, unrelated button/pills group.
+    """
+    rules = []
+    for i, (_, color) in enumerate(LABEL_COLORS.items(), start=1):
+        selector = (
+            f'.st-key-graph_type_filter div[data-testid="stButtonGroup"] > div > '
+            f"button:nth-of-type({i})"
+        )
+        # Unselected: muted gray, same treatment as a plain inactive filter chip - the
+        # color only shows up once you've actually selected that type, so on/off reads
+        # clearly instead of every pill looking like a permanently "half-lit" version
+        # of its color.
+        rules.append(
+            f"{selector} {{ border-color: #CBD5E1 !important; color: #64748B !important; "
+            f"background-color: #F8FAFC !important; }}"
+        )
+        rules.append(
+            f'{selector}[aria-pressed="true"] {{ border-color: {color} !important; '
+            f"color: {color} !important; background-color: {color}26 !important; "
+            f"font-weight: 700 !important; }}"
+        )
+    return f"<style>{' '.join(rules)}</style>"
+
+
 def _filtered_graph(nodes, edges, selected_labels):
     if len(selected_labels) == len(LABEL_COLORS):
         return nodes, edges  # everything selected - skip filtering, keep original order
@@ -32,6 +63,7 @@ def render_graph_explorer_tab() -> None:
         "Show entity types", all_labels, selection_mode="multi",
         default=all_labels, label_visibility="collapsed", key="graph_type_filter",
     ) or []
+    st.markdown(_pill_colors_css(), unsafe_allow_html=True)
 
     try:
         all_nodes, all_edges = fetch_full_graph()
