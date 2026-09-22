@@ -151,7 +151,10 @@ Contracts & Billing dashboard, the polish pass, and the optional extensions
 below. Both schema/seed scripts were validated against throwaway
 `postgres:16-alpine` and `neo4j:5-community` Docker containers during
 development, and the UI was verified with real headless-Chromium browser
-testing, not just Python-level checks.
+testing, not just Python-level checks. See
+[`docs/development_log.md`](docs/development_log.md) for the real bugs found
+along the way and the non-obvious lessons behind design decisions that
+aren't visible from reading the code alone.
 
 ### Optional extensions (build step 8)
 
