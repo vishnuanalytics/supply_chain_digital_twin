@@ -10,6 +10,12 @@ existing systems (like SAP) by answering conversational, cross-system questions
 in seconds instead of requiring someone to write SQL or Cypher, dig through
 multiple screens, or wait on a report.
 
+**🔗 Live demo: [supplychaintwin.streamlit.app](https://supplychaintwin.streamlit.app/)**
+(free-tier LLM quotas reset daily, so a burst of testing may occasionally show a
+temporary "couldn't reach any LLM provider" message — the Neo4j/Postgres-backed
+parts of the app, like the Graph Explorer and Contracts & Billing dashboard,
+aren't affected by that and are always live.)
+
 ![Ask a Question tab showing a real answer with confidence badge and supporting data](docs/screenshots/ask_a_question.png)
 
 ## Why not just ask an LLM directly?
@@ -180,6 +186,10 @@ aren't visible from reading the code alone.
   — the app never depends on Jev being reachable.
 
 ## Deploying
+
+**Already deployed:** [supplychaintwin.streamlit.app](https://supplychaintwin.streamlit.app/).
+The steps below are for redeploying it yourself (a fork, a different Neo4j/Postgres
+instance, etc.).
 
 The fastest option is [Streamlit Community Cloud](https://streamlit.io/cloud),
 which builds and hosts straight from this GitHub repo for free. The app's
