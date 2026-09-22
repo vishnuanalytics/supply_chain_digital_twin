@@ -227,7 +227,7 @@ had zero effect.
 Built after the spec's own Definition of Done was already met, specifically to
 show a few more things an AI-engineering role usually cares about:
 
-- **CI + a real unit test suite** — 143 pytest tests (`tests/`) covering the
+- **CI + a real unit test suite** — 148 pytest tests (`tests/`) covering the
   deterministic logic the eval harness alone doesn't isolate: JSON-output
   parsing, `simulate_scenario`'s what-if math, `_assert_read_only`'s
   injection-resilience (see below), the LLM provider fallback chain, and the

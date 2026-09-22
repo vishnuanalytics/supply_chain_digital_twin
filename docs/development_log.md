@@ -686,3 +686,75 @@ flaky in this sandbox for reasons unrelated to the change itself (`load_chat_ses
 was independently confirmed correct via a bare script, returning real persisted rows)
 - the AppTest coverage above was judged sufficient rather than continuing to fight
 browser-automation flakiness for a low-risk, mechanical UI change.
+
+## Real bug: the graph trace was invisible after collapsing it — 2026-09-22
+
+Direct follow-up report on the change above: "the graph is not showing and give a
+center to fit option to make graph visible even it is missed by too much zoom."
+
+**Root cause, found by inspecting the live DOM (not guessed):** a Streamlit custom
+component's iframe (streamlit-agraph's `agraph()`) negotiates its own height with the
+parent page exactly once, right at mount time, via a JS call back to Streamlit. If it
+mounts while its `st.expander` ancestor is still collapsed (the native `<details>`
+element's content is `inert` when closed), that one-time negotiation measures a
+0-height container and never re-fires - confirmed directly: `iframe.offsetHeight`
+stayed `0` forever with a plain `agraph()` call inside the new expander from the
+previous change, even well after the user opened it.
+
+**Fix, two parts, both needed:**
+1. `st.expander(..., key=expander_key, on_change="rerun")` - gives the expander a
+   real, readable open/closed state in `st.session_state[expander_key]`, and makes
+   *opening* it trigger an actual script rerun (the default `on_change="ignore"`
+   only toggles CSS client-side, with no way for Python to react). On that rerun the
+   agraph's own `key` is built to include `'open'` vs `'closed'`, so streamlit-agraph
+   fully unmounts and remounts the moment the expander opens - and since this remount
+   happens on a script pass where the expander is already open from the start (not
+   toggled via pure CSS afterward), the new iframe negotiates its height against a
+   real, visible container and sizes correctly. Verified via real DOM measurement in a
+   loop after clicking: `offsetHeight` flickers to 0 mid-transition (~1-2s, the round
+   trip to the server) then settles at the requested `420` and stays there - the graph
+   genuinely appears with no further action needed most of the time.
+2. **The requested "🎯 Center / fit graph" button** - a per-card `st.session_state`
+   generation counter that also feeds into the agraph's `key`. Clicking it forces
+   another full remount (same mechanism as #1), which is both the explicit manual
+   recovery path the user asked for ("even it is missed by too much zoom" - vis-network
+   has no Python-exposed `.fit()`/`.redraw()` call, so a full remount re-running its own
+   `stabilization: {fit: true}` config is the only way to force a re-center from this
+   side) and a reliable fallback for the rare case where #1's automatic fix doesn't
+   settle in time.
+
+`ui/graph_viz.py` already had a `keyed_agraph()` helper built for exactly this pattern
+(from the earlier Graph Explorer stale-click fix) - reused rather than duplicated.
+`render_answer_card()` gained a `card_key: str | None = None` parameter (auto-derived
+from a hash of question+answer when the caller doesn't supply one, e.g. Billing's
+single drilldown) since every widget key inside now needs to be unique per card - the
+Ask tab's chat thread renders every turn's card on the same page simultaneously, so
+`ui/tabs/ask.py` now passes an explicit `f"{session_id}_{idx}"` (history) /
+`f"{session_id}_live"` (the in-progress turn) key.
+
+**Real bug caught while writing the tests, not in the app code:** the first draft of
+`tests/test_answer_card.py`'s mock `agent.db.run_cypher` return value used the wrong
+row shape entirely (copied from a *different* function's column names -
+`a_label`/`a`/`b_label`/`b` instead of `fetch_highlighted_subgraph`'s actual
+`n_label`/`n_id`/`n_name`/`m_label`/`m_id`/`m_name`/`rel_type`/`r_props`). Since
+`render_answer_card` wraps the fetch in a broad `except Exception` (correct production
+behavior - Neo4j going down mid-render shouldn't crash the card), the resulting
+`KeyError` was silently swallowed and every test still passed, just not testing what it
+claimed to (no nodes ever actually rendered, so the button/graph code paths were never
+exercised). Caught only because a *later* test asserting the "Center / fit" button's
+presence failed for real. **How to apply:** a mock that raises inside code with a broad
+except is a false-green test - when mocking a function whose return shape a Cypher
+query defines, copy the exact column names from that query, don't assume a shape from
+a similar-looking function elsewhere in the same file.
+
+Also caught, separately, while writing the multi-card isolation test: `AppTest.
+from_function()` execs only the target function's own source text in isolation - it
+does NOT have access to the enclosing test module's global constants (`SAMPLE_STATE`
+referenced inside a nested function failed with `NameError`, even though it worked
+fine as a *default argument value*, which Python evaluates in the outer scope before
+the function object is even created). Fix: pass such data through `kwargs=`, never
+rely on closures.
+
+10 new tests (`tests/test_answer_card.py`, 148 total): the two real DOM-level findings
+above were verified live in a real browser first (a throwaway diagnostic script,
+deleted afterward, never committed) before being encoded as regression tests.

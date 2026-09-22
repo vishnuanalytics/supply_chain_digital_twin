@@ -40,14 +40,19 @@ def _remember(question: str, result: dict) -> None:
             pass
 
 
-def _render_turn(item: dict) -> None:
+def _render_turn(item: dict, idx: int) -> None:
     with st.chat_message("user"):
         st.markdown(item["question"])
     with st.chat_message("assistant"):
         if "error" in item:
             render_error_card(item["question"], item["error"], show_question=False)
         else:
-            render_answer_card(item["state"])
+            # A stable per-turn key (not just the loop index alone, since "New chat"
+            # resets `history` back to an empty list without also clearing dynamically-
+            # created widget keys - folding session_id in keeps a fresh session's turn 0
+            # from inheriting a stale expander/fit state left over from a previous
+            # session's own turn 0).
+            render_answer_card(item["state"], card_key=f"{st.session_state.get('session_id', '')}_{idx}")
 
 
 def _render_approval_prompt(pending: dict) -> None:
@@ -116,8 +121,8 @@ def render_ask_tab() -> None:
 
     # The thread so far, oldest first - a real conversation log, not a reverse-
     # chronological stack of separate report cards.
-    for item in history:
-        _render_turn(item)
+    for idx, item in enumerate(history):
+        _render_turn(item, idx)
 
     if pending_approval:
         _render_approval_prompt(pending_approval)
@@ -147,5 +152,7 @@ def render_ask_tab() -> None:
                 if "error" in result:
                     render_error_card(pending, result["error"], show_question=False)
                 else:
-                    render_answer_card(result["state"])
+                    render_answer_card(
+                        result["state"], card_key=f"{st.session_state.get('session_id', '')}_live"
+                    )
                 _remember(pending, result)

@@ -2,12 +2,13 @@
 question, whether from the chat tab or the billing dashboard, produces. Never skip a
 layer for a "simple" answer - that consistency is the point.
 """
+import hashlib
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from streamlit_agraph import agraph
 
-from ui.graph_viz import default_config, extract_ids, fetch_highlighted_subgraph
+from ui.graph_viz import default_config, extract_ids, fetch_highlighted_subgraph, keyed_agraph
 from ui.theme import ACCENT, confidence_badge_html
 
 
@@ -35,7 +36,16 @@ def _simulation_chart(sim: dict):
     return fig
 
 
-def render_answer_card(state: dict) -> None:
+def render_answer_card(state: dict, card_key: str | None = None) -> None:
+    if card_key is None:
+        # Derive a stable key from content when the caller doesn't pass one explicitly
+        # (e.g. the Billing tab's drilldown, where only one card is ever on screen at a
+        # time). A caller rendering several cards on the same page at once (the Ask
+        # tab's chat history) must pass an explicit unique key instead - two identical
+        # Q&A pairs would otherwise collide on the same derived key.
+        basis = f"{state.get('question')}|{state.get('answer')}"
+        card_key = hashlib.sha1(basis.encode()).hexdigest()[:12]
+
     answer = state.get("answer") or "I wasn't able to generate an answer."
     confidence = state.get("confidence")
 
@@ -95,7 +105,21 @@ def render_answer_card(state: dict) -> None:
     # Rendering the vis-network graph is the most expensive part of this card, and it's
     # supporting evidence a user checks occasionally, not something needed to read every
     # answer - collapsing it by default keeps the primary answer text the focal point.
-    with st.expander("🕸️ Show graph trace", expanded=False):
+    #
+    # Real bug found by inspecting the live DOM (not just a screenshot): a Streamlit
+    # custom component's iframe negotiates its own height once, right when it mounts,
+    # via a JS call back to the parent page - if it mounts while its expander ancestor
+    # is still collapsed (display:none), that negotiation measures a 0-height container
+    # and never fires again, so the graph is invisible even after the expander opens
+    # (confirmed: iframe offsetHeight stayed 0 forever with a plain agraph() call here).
+    # Fix: give the expander its own `key` + `on_change="rerun"` so OPENING it triggers
+    # a real script rerun (not just client-side CSS toggling), then fold that "is this
+    # expander currently open" state into the agraph's own key. A changed key forces
+    # streamlit-agraph to fully unmount and remount - and since that remount now happens
+    # on a fresh run where the expander is already open from the start, the new iframe
+    # negotiates its height against a real, visible container and sizes correctly.
+    expander_key = f"graph_trace_exp_{card_key}"
+    with st.expander("🕸️ Show graph trace", expanded=False, key=expander_key, on_change="rerun"):
         highlighted_ids = extract_ids(
             state.get("neo4j_result"), state.get("postgres_result"), state.get("simulation_result"),
             state.get("semantic_result"),
@@ -107,7 +131,18 @@ def render_answer_card(state: dict) -> None:
                 st.caption("⚠️ Couldn't load the graph trace right now - Neo4j may be unreachable.")
             else:
                 if nodes:
-                    agraph(nodes=nodes, edges=edges, config=default_config(height=420))
+                    is_open = st.session_state.get(expander_key, False)
+                    fit_gen_key = f"graph_trace_fit_gen_{card_key}"
+                    fit_gen = st.session_state.get(fit_gen_key, 0)
+                    if st.button(
+                        "🎯 Center / fit graph", key=f"graph_trace_fit_btn_{card_key}",
+                        help="Re-mounts the graph and re-fits it to the view - use this if it's "
+                             "blank, or if panning/zooming lost track of the nodes.",
+                    ):
+                        fit_gen += 1
+                        st.session_state[fit_gen_key] = fit_gen
+                    view_key = f"graph_trace_view_{card_key}_{'open' if is_open else 'closed'}_{fit_gen}"
+                    keyed_agraph(nodes, edges, default_config(height=420), key=view_key)
                 else:
                     st.caption("No graph nodes matched this answer's entities.")
         else:
