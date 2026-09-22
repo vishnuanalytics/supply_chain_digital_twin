@@ -6,6 +6,7 @@ must never let a hallucinated or prompt-injected query mutate it.
 """
 import re
 
+import neo4j.time
 import psycopg2
 import psycopg2.extras
 from neo4j import GraphDatabase
@@ -16,6 +17,25 @@ _WRITE_KEYWORDS = re.compile(
     r"\b(CREATE|MERGE|DELETE|REMOVE|SET|DROP|DETACH|INSERT|UPDATE|ALTER|TRUNCATE|GRANT|REVOKE|CALL\s+apoc\.)\b",
     re.IGNORECASE,
 )
+
+# A few Neo4j nodes (e.g. Contract) have real date-typed properties (see
+# neo4j/seed_data.cypher's `date(row.start)`), which the driver returns as its own
+# neo4j.time.Date/DateTime/Time - not a Python datetime.date/datetime/time subclass.
+# langgraph's checkpointer serializer (needed for human_approval_gate's interrupt/resume
+# state, build step 8) doesn't know these types and raises "Type is not msgpack
+# serializable", so every row returned from Neo4j gets normalized to native Python
+# temporal types here, once, rather than leaving every caller to remember to convert.
+_NEO4J_TEMPORAL_TYPES = (neo4j.time.Date, neo4j.time.DateTime, neo4j.time.Time)
+
+
+def _to_native(value):
+    if isinstance(value, _NEO4J_TEMPORAL_TYPES):
+        return value.to_native()
+    if isinstance(value, dict):
+        return {k: _to_native(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_to_native(v) for v in value]
+    return value
 
 
 class QuerySafetyError(Exception):
@@ -42,7 +62,7 @@ def run_cypher(query: str, params: dict | None = None) -> list[dict]:
     driver = get_neo4j_driver()
     with driver.session(database=config.NEO4J_DATABASE) as session:
         result = session.run(query, params or {})
-        return [record.data() for record in result]
+        return [_to_native(record.data()) for record in result]
 
 
 def get_postgres_connection():
