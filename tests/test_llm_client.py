@@ -110,3 +110,84 @@ class TestComplete:
              patch.dict(llm_client._PROVIDER_FNS, {"groq": lambda *a, **k: ("ok", "model-a")}):
             result = llm_client.complete("system", "user")
             assert result.provider == "groq"
+
+
+class TestManualOverride:
+    """The sidebar's model picker (ui/sidebar.py) forces a single provider/model via
+    set_override() - deliberately no cross-provider fallback when a specific model is
+    manually chosen, unlike the normal Auto chain above."""
+
+    def teardown_method(self):
+        # Guard against a test failure leaving the contextvar set and bleeding into a
+        # later test - set_override's own docstring warns about exactly this class of bug.
+        llm_client.reset_override(llm_client.set_override(None))
+
+    def test_override_forces_the_chosen_provider_even_when_earlier_in_chain_would_win(self):
+        groq_call = MagicMock()
+        with patch.dict(llm_client._PROVIDER_FNS, {
+            "groq": groq_call,
+            "gemini": lambda *a, **k: ("from gemini", "gemini-3.6-flash"),
+        }):
+            token = llm_client.set_override("gemini")
+            try:
+                result = llm_client.complete("system", "user")
+            finally:
+                llm_client.reset_override(token)
+            assert result.provider == "gemini"
+            assert result.model == "gemini-3.6-flash"
+            groq_call.assert_not_called()  # Auto would have tried groq first; override must not
+
+    def test_override_passes_the_chosen_model_through_to_the_provider_fn(self):
+        seen = {}
+
+        def fake_groq(system, user, max_tokens, model=None):
+            seen["model"] = model
+            return "ok", model
+
+        with patch.dict(llm_client._PROVIDER_FNS, {"groq": fake_groq}):
+            token = llm_client.set_override("groq", "qwen/qwen3.8-27b")
+            try:
+                llm_client.complete("system", "user")
+            finally:
+                llm_client.reset_override(token)
+        assert seen["model"] == "qwen/qwen3.8-27b"
+
+    def test_override_does_not_fall_back_to_other_providers_on_failure(self):
+        def failing_gemini(*a, **k):
+            raise llm_client.ProviderError("rate limited")
+
+        openrouter_call = MagicMock()
+        with patch.dict(llm_client._PROVIDER_FNS, {"gemini": failing_gemini, "openrouter": openrouter_call}):
+            token = llm_client.set_override("gemini")
+            try:
+                with pytest.raises(RuntimeError, match="Manually selected gemini failed"):
+                    llm_client.complete("system", "user")
+            finally:
+                llm_client.reset_override(token)
+        openrouter_call.assert_not_called()
+
+    def test_no_override_uses_the_normal_auto_chain(self):
+        with patch.dict(llm_client._PROVIDER_FNS, {"groq": lambda *a, **k: ("auto works", "model-a")}):
+            token = llm_client.set_override(None)
+            try:
+                result = llm_client.complete("system", "user")
+            finally:
+                llm_client.reset_override(token)
+            assert result.provider == "groq"
+
+
+class TestKnownModels:
+    def test_every_provider_fn_has_at_least_one_known_model(self):
+        for provider in llm_client._PROVIDER_FNS:
+            assert llm_client.KNOWN_MODELS.get(provider), f"{provider} has no KNOWN_MODELS entry"
+
+    def test_every_known_models_provider_is_a_real_provider_fn(self):
+        for provider in llm_client.KNOWN_MODELS:
+            assert provider in llm_client._PROVIDER_FNS
+
+
+class TestCallGemini:
+    def test_raises_when_no_api_key(self):
+        with patch("agent.config.GEMINI_API_KEY", ""):
+            with pytest.raises(llm_client.ProviderError, match="GEMINI_API_KEY"):
+                llm_client._call_gemini("system", "user", 100)

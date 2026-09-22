@@ -6,7 +6,9 @@ import uuid
 
 import streamlit as st
 
+from agent import llm_client
 from agent.graph import get_graph
+from ui.sidebar import current_llm_override
 
 _LOADING_MESSAGES = {
     "classify_query": "Figuring out how to answer this...",
@@ -47,24 +49,32 @@ def run_question(question: str, conversation_history: list[dict] | None = None) 
     """
     thread_id = str(uuid.uuid4())
     config = {"configurable": {"thread_id": thread_id}, "run_name": "ask_question"}
-    with st.status("Understanding your question...", expanded=False) as status:
-        try:
-            final_state = _stream(
-                {
-                    "question": question, "reasoning_log": [], "decision_log": [], "retry_count": 0,
-                    "use_jev": st.session_state.get("use_jev", False),
-                    "conversation_history": conversation_history or [],
-                },
-                config, status,
-            )
-            if "__interrupt__" in final_state:
-                status.update(label="Waiting for your approval...", state="running")
-                return {"interrupt": final_state["__interrupt__"][0].value, "thread_id": thread_id}
-            status.update(label="Answer ready", state="complete")
-            return {"state": final_state}
-        except Exception as exc:  # noqa: BLE001 - surfaced as a designed error state, not a crash
-            status.update(label="Ran into a problem", state="error")
-            return {"error": str(exc)}
+    # Honors the sidebar's manual model picker for every LLM call this question makes -
+    # (None, None) is a no-op (llm_client.complete() falls back to its normal Auto
+    # chain). Always reset in `finally` so one question's manual pick can never leak
+    # into the next (see llm_client.set_override's own docstring for why this matters).
+    override_token = llm_client.set_override(*current_llm_override())
+    try:
+        with st.status("Understanding your question...", expanded=False) as status:
+            try:
+                final_state = _stream(
+                    {
+                        "question": question, "reasoning_log": [], "decision_log": [], "retry_count": 0,
+                        "use_jev": st.session_state.get("use_jev", False),
+                        "conversation_history": conversation_history or [],
+                    },
+                    config, status,
+                )
+                if "__interrupt__" in final_state:
+                    status.update(label="Waiting for your approval...", state="running")
+                    return {"interrupt": final_state["__interrupt__"][0].value, "thread_id": thread_id}
+                status.update(label="Answer ready", state="complete")
+                return {"state": final_state}
+            except Exception as exc:  # noqa: BLE001 - surfaced as a designed error state, not a crash
+                status.update(label="Ran into a problem", state="error")
+                return {"error": str(exc)}
+    finally:
+        llm_client.reset_override(override_token)
 
 
 def resume_question(thread_id: str, approved: bool, note: str = "") -> dict:
@@ -74,14 +84,18 @@ def resume_question(thread_id: str, approved: bool, note: str = "") -> dict:
     from langgraph.types import Command
 
     config = {"configurable": {"thread_id": thread_id}, "run_name": "ask_question_resume"}
-    with st.status("Finishing up...", expanded=False) as status:
-        try:
-            final_state = _stream(Command(resume={"approved": approved, "note": note}), config, status)
-            status.update(label="Answer ready", state="complete")
-            return {"state": final_state}
-        except Exception as exc:  # noqa: BLE001
-            status.update(label="Ran into a problem", state="error")
-            return {"error": str(exc)}
+    override_token = llm_client.set_override(*current_llm_override())
+    try:
+        with st.status("Finishing up...", expanded=False) as status:
+            try:
+                final_state = _stream(Command(resume={"approved": approved, "note": note}), config, status)
+                status.update(label="Answer ready", state="complete")
+                return {"state": final_state}
+            except Exception as exc:  # noqa: BLE001
+                status.update(label="Ran into a problem", state="error")
+                return {"error": str(exc)}
+    finally:
+        llm_client.reset_override(override_token)
 
 
 def render_error_card(question: str, error: str, show_question: bool = True) -> None:

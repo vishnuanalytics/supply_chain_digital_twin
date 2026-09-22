@@ -1,13 +1,75 @@
 """Persistent sidebar: a ChatGPT-style conversation list (new chat + past sessions,
-always visible - not tucked behind a popover you have to open), live graph stats, the
-"Use Jev for fast decisions" toggle (build step 8), and the previous query's
-engine/latency breakdown.
+always visible - not tucked behind a popover you have to open), a manual LLM
+model picker, live graph stats, the "Use Jev for fast decisions" toggle (build step 8),
+and the previous query's engine/latency breakdown.
 """
 import uuid
 
 import streamlit as st
 
-from agent import config, db
+from agent import config, db, llm_client
+
+AUTO_CHOICE = "auto"
+
+
+def _available_model_choices() -> list[tuple[str, str, str]]:
+    """(label, provider, model) for every model in llm_client.KNOWN_MODELS whose
+    provider actually has an API key configured - a model for a provider with no key
+    would just fail immediately, so there's no point offering it."""
+    key_present = {
+        "groq": bool(config.GROQ_API_KEY),
+        "openrouter": bool(config.OPENROUTER_API_KEY),
+        "anthropic": bool(config.ANTHROPIC_API_KEY),
+        "gemini": bool(config.GEMINI_API_KEY),
+    }
+    choices = []
+    for provider, models in llm_client.KNOWN_MODELS.items():
+        if not key_present.get(provider):
+            continue
+        for model in models:
+            choices.append((f"{provider.capitalize()} — {model}", provider, model))
+    return choices
+
+
+def current_llm_override() -> tuple[str | None, str | None]:
+    """Reads the sidebar's model picker choice - (None, None) for Auto (the normal
+    fallback chain), else the (provider, model) to force. Called by ui/agent_runner.py
+    right before each graph run."""
+    choice = st.session_state.get("llm_choice", AUTO_CHOICE)
+    if choice == AUTO_CHOICE:
+        return None, None
+    provider, _, model = choice.partition("::")
+    return provider, model
+
+
+def _render_model_picker() -> None:
+    st.markdown("### 🧠 Model")
+    choices = _available_model_choices()
+    options = [AUTO_CHOICE] + [f"{provider}::{model}" for _, provider, model in choices]
+    labels = {AUTO_CHOICE: "Auto (recommended fallback chain)"}
+    labels.update({f"{provider}::{model}": label for label, provider, model in choices})
+
+    st.session_state.setdefault("llm_choice", AUTO_CHOICE)
+    if st.session_state["llm_choice"] not in options:
+        st.session_state["llm_choice"] = AUTO_CHOICE  # a stale choice from before a key was removed
+
+    st.selectbox(
+        "Model", options=options, format_func=lambda k: labels.get(k, k), key="llm_choice",
+        help="Auto tries Groq → OpenRouter → Anthropic → Gemini in order, falling back on "
+             "any error. Picking a specific model forces that one alone - no silent "
+             "fallback if it fails, so you can tell exactly which model is actually up.",
+    )
+    if st.session_state["llm_choice"] != AUTO_CHOICE:
+        provider, _ = current_llm_override()
+        note = (
+            "Groq's daily quota is per-model, so this genuinely has its own headroom."
+            if provider == "groq" else
+            "OpenRouter's free-tier rate limit is account-wide, not per-model - "
+            "picking a different OpenRouter model changes output quality, not quota."
+            if provider == "openrouter" else None
+        )
+        if note:
+            st.caption(f"ℹ️ {note}")
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -104,6 +166,8 @@ def render_sidebar() -> None:
         else:
             st.caption("⚠️ Couldn't reach Neo4j right now.")
         st.caption(f"Demo data as of {config.DEMO_REFERENCE_DATE.isoformat()}")
+
+        _render_model_picker()
 
         st.markdown("### Decision engine")
         st.session_state["use_jev"] = st.toggle(

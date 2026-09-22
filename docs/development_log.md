@@ -525,3 +525,79 @@ actually ran for real (not rejected) - meaning there WAS headroom before this pr
 which the probe itself then consumed. Confirms the existing note: this trick is only
 "free" when headroom is already smaller than the oversized request; otherwise it
 silently spends real quota. `GROQ_MODEL` restored to `openai/gpt-oss-120b` afterward.
+
+## 4th LLM provider (Gemini) + a manual model picker — 2026-09-22
+
+Direct motivation: this same session hit all three providers (Groq, OpenRouter,
+Anthropic) exhausted/blocked simultaneously, more than once, with no way to answer a
+single question until something reset. User asked for Ollama as a local fourth
+fallback, but their laptop can't run even a small local model - so the real fix is
+another genuinely independent *hosted*, free provider, plus a way to manually pick
+which model answers a given question (useful both to route around a dead provider on
+the spot, and to demo the multi-provider architecture directly).
+
+**Gemini added as a real 4th provider** (`agent/llm_client.py::_call_gemini`), raw
+`urllib` HTTP like `_call_openrouter` (no new SDK dependency, consistent with the
+existing pattern). Key facts confirmed live, not assumed, since my training data
+predates whatever Gemini's current lineup looks like:
+- The user's pasted key was NOT a standard `AIzaSy...` AI Studio key format (started
+  `AQ.` instead) - tested directly against the real API rather than assuming it was
+  wrong; it authenticated fine, so key format apparently varies.
+- `gemini-2.0-flash` (my first guess) 404'd with an explicit deprecation message
+  naming its replacement; `gemini-3.6-flash` is the currently correct model id for
+  this account as of today.
+- Like Groq's gpt-oss models, `gemini-3.6-flash` spends part of `maxOutputTokens` on
+  a hidden "thinking" pass before the visible answer (confirmed: 72 total tokens for a
+  2-token reply with thinking on, 8 total with it off) - `generationConfig.
+  thinkingConfig.thinkingBudget: 0` disables it, the Gemini-API equivalent of Groq's
+  `reasoning_effort: "low"` trick used elsewhere in this file, and for the same reason
+  (don't let hidden reasoning starve short structured JSON/Cypher/SQL outputs).
+- Verified against REAL pipeline nodes, not just a "say OK" probe: forced via the new
+  override mechanism (below), `classify_query` produced correct structured JSON
+  (`parse_ok: True`), and `query_neo4j` generated genuinely correct Cypher
+  (`MATCH (rm:RawMaterial)-[:SOURCED_FROM]->(s:Supplier) WITH rm, count(DISTINCT s)...`)
+  that returned real matching rows. Then confirmed live end-to-end through the actual
+  browser UI, all four pipeline nodes (`classify_query`→`query_neo4j`→
+  `validate_results`→`synthesize`) running through Gemini alone while Groq/OpenRouter/
+  Anthropic were still exhausted - real answer, real table, rendered correctly in the
+  chat thread.
+- `LLM_PROVIDER_ORDER` default (both `agent/config.py` and `.env`) updated to
+  `groq,openrouter,anthropic,gemini` - Gemini is now a genuine part of Auto's fallback
+  chain, not just a manually-selectable extra.
+
+**Manual model picker** (new "🧠 Model" section in `ui/sidebar.py`, right above
+"Decision engine"): a selectbox with "Auto (recommended fallback chain)" plus one
+entry per model in the new `llm_client.KNOWN_MODELS` registry, filtered to only
+providers with a configured API key (`_available_model_choices()`) so nothing
+guaranteed-to-fail is ever offered. Picking a specific model forces it via
+`llm_client.set_override(provider, model)`, called from `ui/agent_runner.py`'s
+`run_question()`/`resume_question()` right before each graph run and reset in a
+`finally` block.
+
+**Deliberate design choice, confirmed with the user first (AskUserQuestion) rather
+than assumed:** a manually-picked model gets NO cross-provider fallback if it fails -
+`complete()` raises `"Manually selected {provider} failed: ..."` immediately instead
+of silently continuing down the Auto chain. Reasoning: silently answering via a
+different model than the one explicitly chosen would defeat the point of picking one
+(demoing that specific model, or diagnosing whether it specifically is up right now).
+
+**Why `contextvars.ContextVar` and not a plain module global for the override:**
+Streamlit runs each browser session's script in its own thread, and this app is
+deployed on Streamlit Cloud where multiple real users could be connected
+simultaneously - a plain global would let one user's manual model pick leak into a
+concurrent session's questions. `_override: ContextVar[dict | None]` avoids that.
+`set_override()` returns a token; every call site resets it in `finally`, matching the
+docstring's own warning about a pick leaking into the next question if reset is
+skipped.
+
+**Also discovered along the way:** OpenRouter's free-tier rate limit
+(`X-RateLimit-Limit: 50`) is account-wide across every `:free` model, not per-model
+like Groq's - confirmed via `/api/v1/models`, which listed 21 real free models on this
+account. The sidebar surfaces this directly: picking a different Groq model shows "own
+headroom" (genuinely true), picking a different OpenRouter model shows "changes output
+quality, not quota" (so a user doesn't wrongly assume switching OpenRouter models is a
+way to dodge its daily cap).
+
+New tests: `TestManualOverride`/`TestKnownModels`/`TestCallGemini` in
+`tests/test_llm_client.py`, plus `tests/test_model_picker.py` for
+`_available_model_choices()`/`current_llm_override()` - 138 total, all green.

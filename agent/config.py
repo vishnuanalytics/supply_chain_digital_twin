@@ -11,7 +11,7 @@ def _list(name: str, default: str) -> list[str]:
     return [p.strip() for p in os.getenv(name, default).split(",") if p.strip()]
 
 
-LLM_PROVIDER_ORDER = _list("LLM_PROVIDER_ORDER", "groq,openrouter,anthropic")
+LLM_PROVIDER_ORDER = _list("LLM_PROVIDER_ORDER", "groq,openrouter,anthropic,gemini")
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
@@ -21,6 +21,9 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3-super-120b-a
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 
 NEO4J_URI = os.getenv("NEO4J_URI", "")
 NEO4J_USERNAME = os.getenv("NEO4J_USERNAME", "neo4j")
