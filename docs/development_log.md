@@ -758,3 +758,114 @@ rely on closures.
 10 new tests (`tests/test_answer_card.py`, 148 total): the two real DOM-level findings
 above were verified live in a real browser first (a throwaway diagnostic script,
 deleted afterward, never committed) before being encoded as regression tests.
+
+## The sell side: sales records + a bigger, more complex graph — 2026-09-22
+
+Direct request: "add more data into it with more nodes and make more complex and also
+we need to track based on the company selling the manufacturing products to the buyers
+and distrubuters as a sale data... Any doubts ask me for clarity." Genuinely ambiguous
+on three real design forks (what "real-time" means, whether buyers/distributors extend
+the existing `Dealer` label or need new node types, where this surfaces in the UI), so
+asked before building anything - two rounds of `AskUserQuestion`, the second needed
+because the first round's free-text answer ("Distributers are two types - those from
+whom we buy... and another type someone who buys from us...") didn't map cleanly onto
+either prepared option and needed a follow-up grounded in the actual current schema
+(`Supplier`/`ThirdPartyVendor` already ARE the upstream "distributors" - no change
+needed there; the real open question was just the downstream side).
+
+**Decisions locked in:** "real-time" = realistic dated demo data, same static-but-
+pinned-to-`DEMO_REFERENCE_DATE` approach as everything else (not a live-ticking
+background job); downstream buyers = extend the existing `Dealer` label with a
+`buyer_type` property (`dealer` vs `distributor`) rather than a new node type; surfaces
+as a new **"📈 Sales"** tab mirroring Contracts & Billing's existing pattern.
+
+**Schema additions:**
+- Neo4j: `Dealer.buyer_type`, a 2nd `Facility` (Westgate Assembly Plant, Reno NV - runs
+  the 3 new product lines' dedicated assembly, vs. the original `Riverside` plant), a
+  4th `Warehouse` (Denver, CO), 2 more `Region`s (Pacific Northwest, Mountain), 7 more
+  `Dealer`s (12 total, roughly half dealer/half distributor), 3 new `Product`s (glass/
+  seating/sensor lines) with their own new `IntermediatePart`s, `RawMaterial`s
+  (Glass, Foam categories), a 4th `ThirdPartyVendor`, and 2 more raw-material
+  `Supplier`s + their `Contract`s. Net: 66 nodes/138 relationships -> **90 nodes/182
+  relationships** - stayed readable at that size in Graph Explorer thanks to the
+  earlier visualization polish (muted edges, tuned physics, no always-on edge labels) -
+  checked directly via screenshot, not assumed.
+- PostgreSQL: new `sales_records` table - the commercial/revenue counterpart to the
+  existing `dealer_orders` (which only ever tracked what/how much was ordered and its
+  fulfillment status), mirroring exactly how `invoices` is already the money-side
+  counterpart to `purchase_orders` on the buy side. References `dealer_orders.order_id`
+  rather than duplicating `dealer_id`/`product_id`/`quantity` - same normalization
+  `invoices` already uses. `postgres/generate_seed_data.py` generates one
+  `sales_records` row per `dealer_order` that actually shipped (a still-backordered
+  order has nothing to invoice yet), with `unit_price` noise around a new
+  `PRODUCT_BASE_PRICE` dict, `channel` derived from a new `DEALER_TYPE` dict (mirrors
+  Neo4j's `buyer_type` - Postgres itself still has no name/type columns, so this exists
+  purely to generate a realistic `channel` value), and `payment_status` following the
+  same pending/paid/overdue logic `invoices` already uses.
+
+**Real bug caught before it shipped:** the original `dealer_orders` date generation
+(`order_date = month + timedelta(days=random.randint(1, 26))`, unchanged from the
+original spec-era code) could already generate dates past `TODAY` for the current
+month (e.g. `TODAY`=Sep 21 but day-of-month roll = 26) - harmless before, since nothing
+rendered raw `dealer_orders` dates in a recency-sorted UI. The new Sales tab's "Recent
+sales (last 90 days)" table, sorted by `sale_date DESC`, made this immediately visible
+as literal future-dated sales relative to the demo's pinned "today" - caught by
+actually looking at the live browser screenshot's dates, not just checking the query
+ran without error. Fixed by capping the current month's day-offset at
+`min(26, (TODAY - month).days)`, and separately capping `sale_date` itself at `TODAY`.
+**How to apply:** a latent date-generation quirk that was invisible in aggregate
+queries can become directly visible the moment a new UI feature sorts/displays raw
+dates - re-check date bounds whenever adding a new "recent activity" view over
+existing generated data, don't assume old generator code is still fine just because it
+was fine for its original use case.
+
+**Agent wiring:** new `sales_analysis` `query_type` (parallel to `contract_status` -
+the sell-side mirror of the buy-side's existing type), added to
+`decision_engine.VALID_QUERY_TYPES`/`_QUERY_TYPE_CRITERIA` (the latter is reused
+directly as Jev's `Choice` criteria, so Jev picked it up with zero extra wiring),
+`graph.POSTGRES_ONLY_TYPES`, and `CLASSIFY_SYSTEM`'s type list + a worked example.
+`SQL_SYSTEM` got a new bullet explaining `sales_records` needs a join to
+`dealer_orders` for dealer/product-level questions (same shape as the existing
+`shipments` "trap" bullet). `NEO4J_SCHEMA` documents `Dealer.buyer_type` and a note
+that "where are we selling" needs both stores. `POSTGRES_SCHEMA` needed no manual
+update at all - it's read live from `schema.sql`, so the new table's comment (which
+already explains the `dealer_orders` join and the cross-database region lookup) just
+showed up in the prompt automatically.
+
+**`ui/tabs/sales.py`** mirrors `ui/tabs/billing.py`'s established pattern closely:
+cached fetch functions (`@st.cache_data(ttl=60)`), a metrics row, two charts (revenue
+trend, revenue-by-region), a clickable table with the same
+`.dvn-scroller.stDataFrameGlideDataEditor` row-click drilldown reusing
+`run_question()`/`render_answer_card()`. "Where we're selling" is the one fetch that
+genuinely can't be a single query: `sales_records`/`dealer_orders` have the revenue and
+`dealer_id`, but only Neo4j's `Dealer -[:SERVICES]-> Region` has the region - joined by
+`dealer_id` in Python inside the tab's own fetch functions, a direct cross-database-by-
+ID join done at the UI layer (not through the LLM agent), same ID-matching convention
+the whole app already relies on. No unit tests for these `st.cache_data`-wrapped fetch
+functions, deliberately matching `billing.py`'s own precedent (zero tests for its
+fetch functions either) - verified live in a real browser instead: metrics, both
+charts (all 7 regions present), the sales table, and the full row-click ->
+`run_question()` -> error-card drilldown flow (blocked only by the same pre-existing
+LLM quota exhaustion affecting the rest of the app that day, not a code bug - confirmed
+via the same graceful-degradation error card `billing.py`'s drilldown already uses).
+
+Also added: `tests/test_graph_routing.py` (10 tests) for `agent/graph.py`'s routing
+functions, which had zero test coverage before despite being pure state-in/string-out
+logic with no LLM/DB dependency - added alongside `sales_analysis` to confirm it routes
+identically to the other `POSTGRES_ONLY_TYPES`. Two small pre-existing staleness bugs
+fixed while in this area: `ui/tabs/about.py`'s architecture diagram and tech-stack list
+still said "Groq / OpenRouter / Anthropic" with no Gemini (missed when Gemini was added
+earlier this session), and a test in `tests/test_ask_tab_chat_flow.py` hardcoded
+`len(example_buttons) == 6`, broken by adding 2 sales example questions - now reads
+`len(EXAMPLE_QUESTIONS)` dynamically.
+
+Applied to the live Neo4j (AuraDB) and Postgres (Neon) instances directly via
+psycopg2/neo4j-driver Python scripts (no `cypher-shell`/`psql` installed in this
+sandbox) - first attempt at the Neo4j apply had a real scripting bug (naive `.split(";")`
+on the whole file text tripped on a semicolon that appeared inside a comment's prose,
+corrupting the next statement); fixed by stripping full `//` comment lines before
+splitting, then re-ran cleanly (safe to re-run - `seed_data.cypher` is MERGE-throughout,
+idempotent). Full `schema.sql` reapplication resets `chat_history`/`action_log` to
+empty, same as every previous schema change this session - expected, not a regression.
+
+158 tests total, all green.

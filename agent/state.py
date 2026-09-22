@@ -22,7 +22,7 @@ class AgentState(TypedDict, total=False):
     resolved_question: Optional[str]
 
     # set by classify_query
-    query_type: str  # graph_traversal | inventory_lookup | cost_analysis | contract_status | compound_multi_hop | semantic_search
+    query_type: str  # graph_traversal | inventory_lookup | cost_analysis | contract_status | sales_analysis | compound_multi_hop | semantic_search
     requires_simulation: bool
     simulation_type: Optional[str]  # disruption | capacity | cost_impact
     simulation_params: dict

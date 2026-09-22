@@ -8,7 +8,7 @@ import streamlit as st
 _DIAGRAM_SOURCE = r"""flowchart TD
     Q["User question"] --> CQ["classify_query<br/>(LLM: routes the question)"]
     CQ -->|"graph_traversal /<br/>compound_multi_hop"| QN["query_neo4j<br/>(LLM writes Cypher)"]
-    CQ -->|"inventory / cost /<br/>contract_status"| QP["query_postgres<br/>(LLM writes SQL)"]
+    CQ -->|"inventory / cost /<br/>contract_status / sales"| QP["query_postgres<br/>(LLM writes SQL)"]
     CQ -->|"disruption / capacity /<br/>cost_impact"| SIM["simulate_scenario<br/>(deterministic Python)"]
     QN -->|"compound_multi_hop<br/>needs both stores"| QP
     QN -->|"else"| VR
@@ -101,9 +101,10 @@ through a self-correction step before being trusted.
         """
 - **LangGraph** for the agent's control flow (routing, retries, the graph shown above)
 - **Neo4j** (AuraDB) for supplier/product/contract relationships
-- **PostgreSQL** (Neon) for transactional data — inventory, billing, shipments, invoices
-- **Groq / OpenRouter / Anthropic** as swappable LLM providers, tried in order with
-  automatic fallback, so the app runs on free-tier models by default
+- **PostgreSQL** (Neon) for transactional data — inventory, billing, shipments, invoices, sales
+- **Groq / OpenRouter / Anthropic / Gemini** as swappable LLM providers, tried in order
+  with automatic fallback (or picked manually via the sidebar), so the app runs on
+  free-tier models by default
 - **Streamlit** for this UI, `streamlit-agraph` for the graph visualizations
         """
     )

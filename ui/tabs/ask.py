@@ -20,6 +20,8 @@ EXAMPLE_QUESTIONS = [
     "Which supplier contracts expire in the next 90 days?",
     "What's our total outstanding balance across active contracts this month?",
     "Are any shipments delayed against contracts with penalty clauses?",
+    "Which distributor generated the most revenue last month?",
+    "Where are we selling the most SUV Suspension Kits?",
 ]
 
 

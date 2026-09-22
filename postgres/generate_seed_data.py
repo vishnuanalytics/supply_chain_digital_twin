@@ -31,13 +31,15 @@ RAW_MATERIALS = {
     "RM8": ("S4", 9.40, "kg"),
     "RM9": ("S5", 1.95, "kg"),
     "RM10": ("S5", 2.05, "kg"),
+    "RM11": ("S7", 4.35, "kg"),
+    "RM12": ("S8", 1.60, "kg"),
 }
 
 # Materials with a rising price trend over the past year (steel, for the
 # "steel prices rise 15%" cost-impact scenario) vs. flat/noisy for the rest.
 RISING_TREND_MATERIALS = {"RM1", "RM2"}
 
-INTERMEDIATE_PARTS = [f"IP{i}" for i in range(1, 16)]
+INTERMEDIATE_PARTS = [f"IP{i}" for i in range(1, 19)]
 
 PRODUCT_WAREHOUSES = {
     "P1": ["WH1", "WH2"],
@@ -46,14 +48,35 @@ PRODUCT_WAREHOUSES = {
     "P4": ["WH2", "WH3"],
     "P5": ["WH1", "WH3"],
     "P6": ["WH1", "WH2", "WH3"],
+    "P7": ["WH4", "WH2"],
+    "P8": ["WH4"],
+    "P9": ["WH4", "WH1"],
 }
 
 PRODUCTION_CAPACITY = {
     "P1": 800, "P2": 500, "P3": 700, "P4": 600, "P5": 1200, "P6": 1500,
+    "P7": 250, "P8": 400, "P9": 900,
 }
 
-DEALERS = ["D1", "D2", "D3", "D4", "D5"]
+# Finished-goods list price per unit - the base sales_records.unit_price is drawn from
+# this with a small +/-5% noise band per sale, same pattern as purchase_orders' price
+# noise around each raw material's base_cost above.
+PRODUCT_BASE_PRICE = {
+    "P1": 145.00, "P2": 210.00, "P3": 320.00, "P4": 410.00, "P5": 68.00, "P6": 54.00,
+    "P7": 580.00, "P8": 340.00, "P9": 95.00,
+}
+
+DEALERS = ["D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10", "D11", "D12"]
 PRODUCTS = list(PRODUCT_WAREHOUSES.keys())
+
+# Mirrors neo4j/seed_data.cypher's Dealer.buyer_type - Postgres itself has no name/type
+# columns (see agent/prompts.py's SQL_SYSTEM note), so this exists purely to generate a
+# realistic sales_records.channel value; the real, queryable buyer_type lives in Neo4j.
+DEALER_TYPE = {
+    "D1": "dealer", "D2": "dealer", "D3": "distributor", "D4": "dealer", "D5": "distributor",
+    "D6": "distributor", "D7": "dealer", "D8": "distributor", "D9": "dealer", "D10": "distributor",
+    "D11": "dealer", "D12": "distributor",
+}
 
 SUPPLIER_PERFORMANCE = {
     # supplier_id: (on_time_rate_pct, avg_delay_days)
@@ -63,9 +86,12 @@ SUPPLIER_PERFORMANCE = {
     "S4": (91.0, 3.0),
     "S5": (93.5, 2.4),
     "S6": (89.0, 4.2),
+    "S7": (93.0, 2.6),
+    "S8": (95.0, 1.9),
     "V1": (95.5, 1.8),
     "V2": (92.0, 2.9),
     "V3": (90.5, 3.4),
+    "V4": (88.5, 3.9),
 }
 
 # contract_id, supplier_id, material_id, start, end, value, penalty_clause
@@ -80,6 +106,8 @@ CONTRACTS = [
     ("C8",  "S4", "RM8",  date(2025, 8, 1),  date(2026, 8, 1),  410000,  False, "Net 45"),
     ("C9",  "S5", "RM9",  date(2026, 2, 28), date(2027, 2, 28), 730000,  False, "Net 30"),
     ("C10", "S5", "RM10", date(2025, 10, 1), date(2026, 10, 1), 295000,  False, "Net 30"),
+    ("C11", "S7", "RM11", date(2026, 5, 1),  date(2027, 5, 1),  560000,  True,  "Net 30"),
+    ("C12", "S8", "RM12", date(2026, 7, 1),  date(2027, 7, 1),  275000,  False, "Net 30"),
     ("C0a", "S1", "RM1",  date(2025, 1, 1),  date(2025, 12, 31), 1100000, False, "Net 45"),
     ("C0b", "S4", "RM8",  date(2024, 8, 1),  date(2025, 8, 1),  395000,  False, "Net 45"),
 ]
@@ -316,7 +344,13 @@ for month in months_back(6):
             order_id = f"DO{order_counter:04d}"
             order_counter += 1
             qty = round(random.uniform(20, 220), 0)
-            order_date = month + timedelta(days=random.randint(1, 26))
+            # For the current (most recent) month, don't generate an order_date past
+            # TODAY - without this cap, "day 1-26 of the current month" can land after
+            # the demo's pinned "today" (e.g. TODAY=Sep 21 but day 26 = Sep 26), which
+            # reads as a future-dated order/sale in any UI sorted by recency. Earlier
+            # months are always fully in the past already, so only this month needs it.
+            max_day_offset = min(26, max(1, (TODAY - month).days)) if month == months_back(6)[-1] else 26
+            order_date = month + timedelta(days=random.randint(1, max_day_offset))
             roll = random.random()
             if roll > 0.93:
                 status = "backordered"
@@ -332,6 +366,48 @@ add_section("dealer_orders", [insert(
     "dealer_orders",
     ["order_id", "dealer_id", "product_id", "quantity", "order_date", "fulfillment_status"],
     dealer_order_rows,
+)])
+
+# ---------------------------------------------------------------------------
+# sales_records - one per dealer_order that actually shipped (a still-
+# backordered order has nothing to invoice yet). unit_price is the product's
+# base list price with the same +/-5% noise band purchase_orders uses for
+# material costs; channel follows the dealer's buyer_type (distributors buy
+# in bulk through a distributor channel; dealers split between walk-in
+# "direct" and a smaller "online" share). payment_status mirrors invoices'
+# logic: the most recent month is still pending, everything older is paid
+# except a small deliberately-injected overdue tail.
+# ---------------------------------------------------------------------------
+sales_rows = []
+sale_counter = 1
+for order_id, dealer_id, product_id, qty, order_date, status in dealer_order_rows:
+    if status == "backordered":
+        continue
+    base_price = PRODUCT_BASE_PRICE[product_id]
+    unit_price = round(base_price * random.uniform(0.95, 1.05), 4)
+    revenue = round(float(qty) * unit_price, 2)
+    sale_date = min(order_date + timedelta(days=random.randint(1, 5)), TODAY)
+
+    if DEALER_TYPE[dealer_id] == "distributor":
+        channel = "distributor"
+    else:
+        channel = "online" if random.random() > 0.7 else "direct"
+
+    if status == "pending":
+        payment_status = "pending"
+    elif random.random() > 0.95:
+        payment_status = "overdue"
+    else:
+        payment_status = "paid"
+
+    sale_id = f"SALE{sale_counter:04d}"
+    sale_counter += 1
+    sales_rows.append((sale_id, order_id, unit_price, "USD", revenue, sale_date, channel, payment_status))
+
+add_section("sales_records", [insert(
+    "sales_records",
+    ["sale_id", "order_id", "unit_price", "currency", "revenue", "sale_date", "channel", "payment_status"],
+    sales_rows,
 )])
 
 # ---------------------------------------------------------------------------
@@ -410,6 +486,7 @@ print(f"  monthly_billing: {len(billing_rows)}")
 print(f"  shipments: {len(shipment_rows)}")
 print(f"  invoices: {len(invoice_rows)}")
 print(f"  dealer_orders: {len(dealer_order_rows)}")
+print(f"  sales_records: {len(sales_rows)}")
 print(f"  production_capacity: {len(PRODUCTION_CAPACITY)}")
 print(f"  supplier_performance: {len(SUPPLIER_PERFORMANCE)}")
 print(f"  inventory_levels: {len(inventory_rows)}")

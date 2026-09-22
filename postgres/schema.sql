@@ -12,6 +12,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 DROP TABLE IF EXISTS chat_history CASCADE;
 DROP TABLE IF EXISTS supplier_notes CASCADE;
 DROP TABLE IF EXISTS action_log CASCADE;
+DROP TABLE IF EXISTS sales_records CASCADE;
 DROP TABLE IF EXISTS invoices CASCADE;
 DROP TABLE IF EXISTS shipments CASCADE;
 DROP TABLE IF EXISTS monthly_billing CASCADE;
@@ -105,6 +106,27 @@ CREATE TABLE dealer_orders (
     fulfillment_status  VARCHAR(15) NOT NULL CHECK (fulfillment_status IN ('pending', 'fulfilled', 'partial', 'backordered'))
 );
 
+-- The commercial/revenue counterpart to dealer_orders (which only tracks what/how much
+-- was ordered and its fulfillment status), mirroring how invoices is the money-side
+-- counterpart to purchase_orders on the buy side. One sales_record per dealer_order
+-- that actually shipped (a still-backordered order has nothing to invoice yet) - the
+-- quantity/dealer/product dimensions live on dealer_orders and are reached via
+-- order_id, not duplicated here, same normalization choice invoices already makes for
+-- supplier_id/material_id. "Where we're selling" (by region) isn't a Postgres column at
+-- all - Dealer->Region only exists in Neo4j (Dealer.SERVICES), so a region breakdown
+-- crosses both stores by dealer_id, same cross-database-by-ID pattern used everywhere
+-- else in this app (see docs/data_reference.md's header note).
+CREATE TABLE sales_records (
+    sale_id           VARCHAR(20) PRIMARY KEY,
+    order_id          VARCHAR(20) NOT NULL REFERENCES dealer_orders(order_id),
+    unit_price        NUMERIC(12, 4) NOT NULL,
+    currency          VARCHAR(3) NOT NULL DEFAULT 'USD',
+    revenue           NUMERIC(14, 2) NOT NULL,
+    sale_date         DATE NOT NULL,
+    channel           VARCHAR(20) NOT NULL CHECK (channel IN ('direct', 'distributor', 'online')),
+    payment_status    VARCHAR(15) NOT NULL CHECK (payment_status IN ('paid', 'pending', 'overdue'))
+);
+
 CREATE TABLE production_capacity (
     product_id          VARCHAR(10) PRIMARY KEY,
     max_units_per_week  NUMERIC(10, 2) NOT NULL
@@ -170,4 +192,6 @@ CREATE INDEX idx_shipments_contract ON shipments(contract_id);
 CREATE INDEX idx_invoices_contract ON invoices(contract_id);
 CREATE INDEX idx_dealer_orders_dealer ON dealer_orders(dealer_id);
 CREATE INDEX idx_dealer_orders_product ON dealer_orders(product_id);
+CREATE INDEX idx_sales_records_order ON sales_records(order_id);
+CREATE INDEX idx_sales_records_date ON sales_records(sale_date DESC);
 CREATE INDEX idx_supplier_notes_supplier ON supplier_notes(supplier_id);

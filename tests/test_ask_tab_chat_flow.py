@@ -12,6 +12,8 @@ from unittest.mock import MagicMock, patch
 
 from streamlit.testing.v1 import AppTest
 
+from ui.tabs.ask import EXAMPLE_QUESTIONS
+
 
 def _mini_app():
     import streamlit as st
@@ -64,7 +66,7 @@ class TestContinuousChatFlow:
             assert not at.exception
 
             example_buttons = [b for b in at.button if b.key and b.key.startswith("example_")]
-            assert len(example_buttons) == 6
+            assert len(example_buttons) == len(EXAMPLE_QUESTIONS)
 
             example_buttons[0].click().run(timeout=30)
             assert not at.exception
@@ -101,7 +103,7 @@ class TestContinuousChatFlow:
             at = AppTest.from_function(_mini_app)
             at.run(timeout=30)
             example_buttons_before = [b for b in at.button if b.key and b.key.startswith("example_")]
-            assert len(example_buttons_before) == 6
+            assert len(example_buttons_before) == len(EXAMPLE_QUESTIONS)
 
             example_buttons_before[0].click().run(timeout=30)
 

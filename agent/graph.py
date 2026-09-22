@@ -8,6 +8,7 @@ Routing:
     -> query_semantic                              if semantic_search
     -> query_neo4j                                if graph_traversal or compound_multi_hop
     -> query_postgres                              if inventory_lookup / cost_analysis / contract_status
+                                                      / sales_analysis
   query_neo4j
     -> query_postgres                              if compound_multi_hop (need both stores)
     -> validate_results                            otherwise
@@ -38,7 +39,7 @@ from .nodes import (
 from .nodes.validate import MAX_RETRIES
 from .state import AgentState
 
-POSTGRES_ONLY_TYPES = {"inventory_lookup", "cost_analysis", "contract_status"}
+POSTGRES_ONLY_TYPES = {"inventory_lookup", "cost_analysis", "contract_status", "sales_analysis"}
 
 
 def _route_after_classify(state: AgentState) -> str:

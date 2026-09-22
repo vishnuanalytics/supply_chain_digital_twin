@@ -15,7 +15,11 @@ Node labels and key properties:
   Facility {id, name, city, state}
   Warehouse {id, name, city, state}
   Region {id, name}
-  Dealer {id, name, city, state}
+  Dealer {id, name, city, state, buyer_type}   // buyer_type is 'dealer' (smaller
+    // regional reseller) or 'distributor' (larger wholesale reseller) - both buy
+    // finished Products from us and resell downstream to end customers; only the
+    // scale/tier differs. Revenue/payment data for what they buy lives in
+    // PostgreSQL's sales_records table (joined via dealer_orders.dealer_id).
   Product {id, name, category}
   IntermediatePart {id, name}
   RawMaterial {id, name, category, unit_of_measure}
@@ -49,4 +53,9 @@ live):
   F# = Facility, WH# = Warehouse, R# = Region, D# = Dealer, P# = Product,
   IP# = IntermediatePart, RM# = RawMaterial, S# = Supplier (raw materials),
   V# = ThirdPartyVendor (intermediate parts), C# = Contract.
+
+"Where are we selling" / revenue-by-region questions need BOTH stores: Dealer->Region
+only exists here (Dealer.SERVICES), while revenue/units/payment-status only exists in
+PostgreSQL's sales_records (joined to dealer_orders by order_id) - resolve the
+Dealer/Region side here first, then filter PostgreSQL by those dealer_id values.
 """

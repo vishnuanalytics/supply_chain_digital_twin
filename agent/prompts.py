@@ -15,7 +15,11 @@ Classify the user's question into exactly one query_type:
 - "cost_analysis": pricing, purchase order costs, unit cost comparisons (not hypothetical
   "what if price changes" questions — those are cost_impact simulations, see below).
 - "contract_status": contract expiry, billing, invoices, shipments, penalties for existing/actual
-  (not hypothetical) situations.
+  (not hypothetical) situations. This is the BUY side (us <- suppliers).
+- "sales_analysis": revenue, units sold, payment status, or sales channel for existing/actual
+  situations. This is the SELL side (us -> dealers/distributors -> end customers) - the mirror
+  image of contract_status. Trigger for phrasing like "how much revenue", "who's our top
+  distributor/dealer", "what are we selling", "unpaid/overdue sales".
 - "compound_multi_hop": needs both the graph (relationships) AND transactional data
   (inventory/billing/etc.) together to answer, and isn't a what-if simulation.
 - "semantic_search": a QUALITATIVE question about a supplier/vendor's quality, compliance,
@@ -100,6 +104,11 @@ Q: "Which supplier contracts expire in the next 90 days?"
 {{"query_type": "contract_status", "requires_simulation": false, "simulation_type": null,
   "simulation_params": {{}}, "resolved_question": "Which supplier contracts expire in the next 90 days?",
   "reasoning": "no specific supplier named, pure Postgres date filter"}}
+
+Q: "How much revenue did we bring in from sales last month?"
+{{"query_type": "sales_analysis", "requires_simulation": false, "simulation_type": null,
+  "simulation_params": {{}}, "resolved_question": "How much revenue did we bring in from sales last month?",
+  "reasoning": "sell-side revenue question, no specific dealer/distributor/product named, pure Postgres aggregate"}}
 
 You may also be given recent conversation history (previous question/answer pairs from
 this session). If the CURRENT question uses a pronoun or vague reference to something
@@ -235,6 +244,11 @@ Rules:
   Dealer X" was already narrowed to X's actual supplying warehouses in the graph — your SQL must
   filter to exactly those warehouse_id values, not run an unscoped/global query across every
   warehouse, even if a global query would also return rows).
+- `sales_records` has NO dealer_id/product_id/quantity columns of its own - those live on
+  `dealer_orders`, joined via `sales_records.order_id = dealer_orders.order_id` (same
+  normalization `invoices` already uses for supplier/material via contract_id/po_id). A
+  "revenue by dealer" or "revenue by product" question needs that JOIN; a pure "total revenue
+  this month" or "which sales are unpaid" question can query `sales_records` alone.
 - `shipments.status` literally contains the value 'in_transit' — but DO NOT use `shipments` to
   answer a "what's in transit to warehouse/dealer X" question about finished PRODUCTS. That
   coincidence of wording is a trap: `shipments` has no warehouse_id and tracks ONLY inbound

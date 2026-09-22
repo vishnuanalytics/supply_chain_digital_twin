@@ -21,8 +21,8 @@ from . import config, llm_client, prompts
 from .utils import extract_json
 
 VALID_QUERY_TYPES = {
-    "graph_traversal", "inventory_lookup", "cost_analysis", "contract_status", "compound_multi_hop",
-    "semantic_search",
+    "graph_traversal", "inventory_lookup", "cost_analysis", "contract_status", "sales_analysis",
+    "compound_multi_hop", "semantic_search",
 }
 VALID_SIMULATION_TYPES = {"disruption", "capacity", "cost_impact"}
 
@@ -35,6 +35,10 @@ _QUERY_TYPE_CRITERIA = {
                       "hypothetical 'what if price changes') situation.",
     "contract_status": "Contract expiry, billing, invoices, shipments, or penalties for an ACTUAL "
                         "situation, with no specific supplier/dealer/product named by name.",
+    "sales_analysis": "Revenue, units sold, payment status, or sales channel for an ACTUAL "
+                       "situation (the sell side: what dealers/distributors buy from us and "
+                       "resell) - not contracts/billing, which is the buy side (suppliers). No "
+                       "specific dealer/distributor/product named by name.",
     "compound_multi_hop": "Needs both the graph (relationships) AND transactional data together, OR "
                            "names any entity (supplier/dealer/product/material) BY NAME rather than by "
                            "ID for a question that needs Postgres data (Postgres has no name columns, "
