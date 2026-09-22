@@ -955,3 +955,73 @@ circuits on `if not all_nodes: return` before ever reaching the code under test 
 simpler and more robust to patch `ui.tabs.graph_explorer.fetch_full_graph`/
 `fetch_node_neighborhood` directly instead of trying to fake every Cypher string they
 issue.
+
+## Shipment timeline: click-to-detail dialog + richer data model — 2026-09-22
+
+**User feedback:** the Contracts & Billing timeline chart needed a visual pass, and
+hovering a point showed only a bare contract number - clicking one should open a
+detail view (a dialog/panel, or a separate page) with real shipment specifics: what
+was ordered, quantities, etc. Also asked, more broadly, to enrich the underlying node
+properties with realistic data so the detail view actually helps a user decide and
+act quickly, not just look nicer.
+
+**Data model first, then UI** - a rich dialog is only as useful as the fields behind
+it, so before touching `ui/tabs/billing.py` added the fields a procurement/logistics
+user would actually want the moment they click into a shipment, none of which existed
+anywhere in the schema before: `contracts` gained `account_manager` (who to actually
+contact, one of eight named reps keyed by supplier) and `auto_renew` (does expiry need
+a manual decision, or does it just renew - `random.random() < 0.65`); `shipments`
+gained `carrier`, `freight_mode` (`truck`/`rail`/`ocean`/`air` - correlated with the
+material's own category in the generator, bulk steel/aluminum skewing rail via `Union
+Pacific Railroad`/`CSX Transportation` rather than assigned randomly, for realism),
+`tracking_number`, and (only ever populated when `status='delayed'`) a `delay_reason`
+drawn from a small realistic pool (winter storm, carrier capacity shortage, customs
+hold, port congestion, mechanical breakdown, supplier production delay). Applied
+`schema.sql` + regenerated `seed_data.sql` live to Neon Postgres, and confirmed via a
+live `SELECT` (not just "the generator ran without error") that the new columns
+actually populated with realistic-looking values before writing any UI code.
+
+**The dialog**: `st.dialog("Shipment detail", width="large")`, triggered by
+`st.plotly_chart(..., on_select="rerun", selection_mode="points")` reading the clicked
+point's `customdata` (the `shipment_id`, threaded through via `px.timeline(...,
+custom_data=["shipment_id"])`). Chose a modal over alternatives (append-below card,
+separate page) because it most directly matches the user's own phrasing ("another
+slide or left panel should open") and needed no restructuring. Deliberately left the
+EXISTING contract-row-click LLM drilldown (`run_question` → `render_answer_card`)
+untouched and added the timeline-click dialog as a second, complementary interaction -
+one round-trips through the agent for a conversational "ask the AI" experience, the
+other is pure SQL (`_fetch_shipment_detail()`, one query joining `shipments` →
+`contracts` → `purchase_orders` → `supplier_performance` → `invoices`) so it opens
+instantly regardless of the LLM-provider-quota exhaustion problem that recurred
+throughout this session.
+
+**`_recommended_action(detail, today)`** - a deterministic, non-LLM function that
+turns the joined row into a single icon + message, checked in a deliberate priority
+order so whatever's shown is always the single most urgent fact: active penalty
+clause on a delayed shipment, beats a plain delay, beats an overdue invoice, beats a
+near-term non-auto-renewing contract, beats a further-out one, beats "on track."
+Genuinely pure (no DB/LLM calls) so it's unit tested directly - 9 new tests in
+`tests/test_billing_dashboard.py` covering every branch and two priority-ordering
+cases, `172` total.
+
+**Two real bugs found live, not assumed:**
+1. `fig.add_vline(x=config.DEMO_REFERENCE_DATE, ...)` raised `TypeError: unsupported
+   operand type(s) for +: 'int' and 'datetime.date'` from inside Plotly's own
+   `_process_multiple_axis_spanning_shapes`/annotation-positioning internals - a raw
+   `datetime.date` breaks on a date-typed x-axis; passing
+   `config.DEMO_REFERENCE_DATE.isoformat()` (a string) instead fixed it. Caught via a
+   real browser test with the full traceback, not guessed from the Plotly docs.
+2. The same CI-vs-local gotcha as the deep-links work earlier this session: verified
+   the whole feature (schema change, seed regeneration, new tests) against the actual
+   CI conditions by temporarily renaming `.env` and re-running the full suite (172
+   passed, zero live credentials) before trusting it, not just a second green run
+   with real credentials present.
+
+Verified end-to-end against live data with a real browser: clicked a genuinely
+delayed, penalty-bearing shipment on contract C1 and confirmed the dialog correctly
+surfaced the top-priority "penalty clause applies - confirm the adjustment with Sarah
+Chen" message, alongside the full shipment (material, quantity, carrier, tracking
+number, delay reason) and contract/supplier panel (value, terms, account manager,
+auto-renew, supplier on-time rate, related invoice status) - screenshot confirmed the
+visual layout (clean two-column dialog, color-coded timeline legend, dashed "Today"
+reference line) matches the text content.

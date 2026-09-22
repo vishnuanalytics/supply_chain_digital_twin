@@ -78,6 +78,32 @@ DEALER_TYPE = {
     "D11": "dealer", "D12": "distributor",
 }
 
+# One account manager per supplier (not per contract) - realistic, since a real
+# procurement relationship is with a person at the supplier, not renegotiated per deal.
+ACCOUNT_MANAGERS = {
+    "S1": "Sarah Chen", "S2": "Marcus Webb", "S3": "Priya Patel", "S4": "David Kim",
+    "S5": "Rachel Owens", "S6": "Tom Bennett", "S7": "Elena Vasquez", "S8": "James O'Brien",
+}
+
+# freight_mode correlates with the material's own category, not pure randomness - bulk
+# steel/aluminum realistically moves by rail more often than the lighter-volume
+# materials, which skew truck.
+RAIL_LIKELY_MATERIALS = {"RM1", "RM2", "RM3", "RM4"}
+CARRIERS = [
+    "Schneider National", "J.B. Hunt Transport", "XPO Logistics",
+    "Old Dominion Freight Line", "Werner Enterprises", "Union Pacific Railroad",
+    "CSX Transportation",
+]
+RAIL_CARRIERS = {"Union Pacific Railroad", "CSX Transportation"}
+DELAY_REASONS = [
+    "Winter storm - regional highway closures",
+    "Carrier capacity shortage",
+    "Customs/inspection hold",
+    "Port congestion",
+    "Mechanical breakdown en route",
+    "Supplier production delay",
+]
+
 SUPPLIER_PERFORMANCE = {
     # supplier_id: (on_time_rate_pct, avg_delay_days)
     "S1": (94.5, 2.1),
@@ -166,15 +192,20 @@ for contract_id, supplier_id, material_id, start, end, value, penalty, terms in 
         status = "expiring_soon"
     else:
         status = "active"
+    # ~65% of contracts auto-renew; the rest need someone to actually decide before
+    # expiry - a real, immediately-actionable distinction once a user clicks in.
+    auto_renew = random.random() < 0.65
     contract_rows.append((
         contract_id, supplier_id, start, end, value, terms, status,
         penalty, PENALTY_TERMS if penalty else None,
+        ACCOUNT_MANAGERS.get(supplier_id), auto_renew,
     ))
 
 add_section("contracts", [insert(
     "contracts",
     ["contract_id", "supplier_id", "start_date", "end_date", "contract_value",
-     "payment_terms", "renewal_status", "penalty_clause", "penalty_terms"],
+     "payment_terms", "renewal_status", "penalty_clause", "penalty_terms",
+     "account_manager", "auto_renew"],
     contract_rows,
 )])
 
@@ -301,7 +332,20 @@ for contract_id, supplier_id, material_id, start, end, value, penalty, terms in 
         else:
             s_status = "delivered"
             received = ship_date + timedelta(days=random.randint(3, 8))
-        shipment_rows.append((shipment_id, contract_id, po_id, ship_date, received, qty, s_status))
+
+        if material_id in RAIL_LIKELY_MATERIALS and random.random() < 0.6:
+            freight_mode = "rail"
+            carrier = random.choice(list(RAIL_CARRIERS))
+        else:
+            freight_mode = "truck"
+            carrier = random.choice([c for c in CARRIERS if c not in RAIL_CARRIERS])
+        tracking_number = f"TRK{random.randint(100000000, 999999999)}"
+        delay_reason = random.choice(DELAY_REASONS) if is_delayed else None
+
+        shipment_rows.append((
+            shipment_id, contract_id, po_id, ship_date, received, qty, s_status,
+            carrier, freight_mode, tracking_number, delay_reason,
+        ))
 
         invoice_id = f"INV{invoice_counter:04d}"
         invoice_counter += 1
@@ -322,7 +366,8 @@ add_section("monthly_billing", [insert(
 )])
 add_section("shipments", [insert(
     "shipments",
-    ["shipment_id", "contract_id", "po_id", "ship_date", "received_date", "quantity", "status"],
+    ["shipment_id", "contract_id", "po_id", "ship_date", "received_date", "quantity", "status",
+     "carrier", "freight_mode", "tracking_number", "delay_reason"],
     shipment_rows,
 )])
 add_section("invoices", [insert(

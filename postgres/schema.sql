@@ -44,7 +44,13 @@ CREATE TABLE contracts (
     payment_terms     VARCHAR(50) NOT NULL,
     renewal_status    VARCHAR(20) NOT NULL CHECK (renewal_status IN ('active', 'expiring_soon', 'expired')),
     penalty_clause    BOOLEAN NOT NULL DEFAULT false,
-    penalty_terms     TEXT
+    penalty_terms     TEXT,
+    -- Who to actually call about this contract, and whether expiry needs a manual
+    -- decision or just renews on its own - both real fields a procurement user
+    -- immediately wants once they've clicked into a contract, neither derivable from
+    -- anything else already in this schema.
+    account_manager   VARCHAR(60),
+    auto_renew        BOOLEAN NOT NULL DEFAULT false
 );
 
 CREATE TABLE purchase_orders (
@@ -83,7 +89,16 @@ CREATE TABLE shipments (
     ship_date         DATE NOT NULL,
     received_date     DATE,
     quantity          NUMERIC(12, 2) NOT NULL,
-    status            VARCHAR(15) NOT NULL CHECK (status IN ('in_transit', 'delivered', 'delayed'))
+    status            VARCHAR(15) NOT NULL CHECK (status IN ('in_transit', 'delivered', 'delayed')),
+    -- "What's actually happening with this shipment" fields a logistics/procurement
+    -- user expects and previously had no way to see at all - who's carrying it, how,
+    -- and (only ever populated when status='delayed') why it's late. freight_mode
+    -- correlates with the material's own category in the generator (bulk steel/
+    -- aluminum skew rail, everything else skews truck) for realism, not randomly.
+    carrier           VARCHAR(50),
+    freight_mode      VARCHAR(20) CHECK (freight_mode IN ('truck', 'rail', 'ocean', 'air')),
+    tracking_number   VARCHAR(30),
+    delay_reason      TEXT
 );
 
 CREATE TABLE invoices (

@@ -75,7 +75,7 @@ needed to read every response.
 |---|---|
 | 💬 **Ask a Question** | Chat-style Q&A with 8 example questions, streaming status updates tied to the actual LangGraph node running (not a generic spinner) |
 | 🕸️ **Graph Explorer** | The full supply chain graph — zoomable, colored by entity type, filterable by type, click any node to zoom into its connections (1-3 hops), hover for full properties, and import/export the graph as JSON to add new suppliers/materials/contracts etc. without writing Cypher |
-| 📄 **Contracts & Billing** | Active contracts with color-coded expiry warnings, this month's billing summary, a per-contract shipment Gantt chart, and click-to-drill-down into the same 3-layer card |
+| 📄 **Contracts & Billing** | Active contracts with color-coded expiry warnings, this month's billing summary, a per-contract shipment Gantt chart (click a bar for an instant shipment detail panel with a computed recommended action), and click-a-row drill-down into the same 3-layer card |
 | 📈 **Sales** | The outbound mirror of Contracts & Billing — revenue and units sold, a 6-month trend, "where we're selling" by region (crosses both stores: revenue lives in Postgres, Dealer→Region only in Neo4j), and the same click-to-drill-down |
 | ℹ️ **About / Architecture** | This project's purpose and the diagram above, for technical reviewers |
 
@@ -231,7 +231,7 @@ had zero effect.
 Built after the spec's own Definition of Done was already met, specifically to
 show a few more things an AI-engineering role usually cares about:
 
-- **CI + a real unit test suite** — 163 pytest tests (`tests/`) covering the
+- **CI + a real unit test suite** — 172 pytest tests (`tests/`) covering the
   deterministic logic the eval harness alone doesn't isolate: JSON-output
   parsing, `simulate_scenario`'s what-if math, `_assert_read_only`'s
   injection-resilience (see below), the LLM provider fallback chain, and the
@@ -328,6 +328,20 @@ show a few more things an AI-engineering role usually cares about:
   when every configured provider is rate-limited. A question like *"any
   compliance concerns with our suppliers?"* has no exact column to filter on,
   so `classify_query` routes it here instead of Cypher/SQL.
+- **Instant, non-LLM shipment detail dialog** — clicking a Gantt bar in
+  Contracts & Billing (previously just a hover tooltip with a bare contract
+  ID) opens an `st.dialog` panel with everything a procurement/logistics user
+  needs to act: carrier, freight mode, tracking number and delay reason on
+  the shipment side; account manager, auto-renew status, penalty terms,
+  supplier on-time rate, and the related invoice's payment status on the
+  contract side. A pure, deterministic `_recommended_action()` function (unit
+  tested, no LLM call) turns those fields into a single priority-ordered
+  icon+message — e.g. an active penalty clause on a delayed shipment always
+  outranks a plain delay or an upcoming renewal — so the dialog opens
+  instantly regardless of LLM provider quota. Backed by new `shipments`
+  columns (`carrier`, `freight_mode`, `tracking_number`, `delay_reason`) and
+  `contracts` columns (`account_manager`, `auto_renew`) in
+  `postgres/generate_seed_data.py`.
 
 ## Deploying
 

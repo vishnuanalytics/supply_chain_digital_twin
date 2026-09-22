@@ -147,6 +147,18 @@ generated programmatically by `postgres/generate_seed_data.py` against this cont
 list — see that script for the exact logic (including a few intentionally-injected
 delays and PO/invoice mismatches used by scenarios 7 and 11).
 
+Each contract also carries an `account_manager` (who to actually contact — one of eight
+named reps, keyed by supplier) and `auto_renew` (whether expiry needs a manual renewal
+decision or renews on its own, `random.random() < 0.65`). Each shipment carries
+`carrier`, `freight_mode` (`truck`/`rail`/`ocean`/`air` — bulk steel/aluminum materials
+skew rail via `Union Pacific Railroad`/`CSX Transportation`, everything else skews truck
+via the remaining carrier pool), `tracking_number`, and (only when `status='delayed'`) a
+`delay_reason` drawn from a small realistic pool (winter storm, carrier capacity
+shortage, customs hold, port congestion, mechanical breakdown, supplier production
+delay). These feed the Contracts & Billing tab's shipment detail dialog — see
+`ui/tabs/billing.py`'s `_recommended_action()` for how they're turned into a single
+priority-ordered recommendation.
+
 ## Sales (the outbound/sell side — mirrors Contracts above, but us -> dealers/distributors)
 `dealer_orders` (what/how much a dealer ordered, and its fulfillment status) and
 `sales_records` (the revenue/payment side, one row per order that actually shipped —
