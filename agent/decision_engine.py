@@ -22,6 +22,7 @@ from .utils import extract_json
 
 VALID_QUERY_TYPES = {
     "graph_traversal", "inventory_lookup", "cost_analysis", "contract_status", "compound_multi_hop",
+    "semantic_search",
 }
 VALID_SIMULATION_TYPES = {"disruption", "capacity", "cost_impact"}
 
@@ -38,6 +39,9 @@ _QUERY_TYPE_CRITERIA = {
                            "names any entity (supplier/dealer/product/material) BY NAME rather than by "
                            "ID for a question that needs Postgres data (Postgres has no name columns, "
                            "so the name must resolve via the graph first).",
+    "semantic_search": "A qualitative question about a supplier/vendor's quality, compliance, risk, "
+                        "or sustainability record - no exact column to filter on, needs free-text "
+                        "search over audit/quality notes instead.",
 }
 
 

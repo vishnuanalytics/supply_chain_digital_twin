@@ -12,6 +12,7 @@ _LOADING_MESSAGES = {
     "classify_query": "Figuring out how to answer this...",
     "query_neo4j": "Traversing the supply graph...",
     "query_postgres": "Checking inventory, contracts & billing records...",
+    "query_semantic": "Searching supplier audit & quality notes...",
     "simulate_scenario": "Running the what-if simulation...",
     "human_approval_gate": "Checking whether this needs your approval...",
     "validate_results": "Double-checking the results...",

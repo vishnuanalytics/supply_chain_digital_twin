@@ -198,6 +198,59 @@ Priorities in the spec, in order: (1) working end-to-end system, (2) polished UI
      really runs, at real cost. Don't use it as a routine pre-flight check; only reach for
      it when you already suspect you're close to the daily ceiling.
 
+## Portfolio extensions (beyond the spec), 2026-09-22
+
+Built after the spec's Definition of Done was already met - CI + pytest suite, multi-turn
+conversation memory, a prompt-injection red-team pass, and light RAG (semantic search).
+See the README's "Portfolio extensions" section for what each one does; the notes below
+are the things worth remembering if extending any of them further.
+
+- **`sentence-transformers` almost shipped, then got swapped for `fastembed`, over a
+  real deployment-size problem, not a style preference.** `pip install
+  sentence-transformers` pulled in PyTorch's default CUDA-enabled wheel - 1.2GB for torch
+  alone, plus ~3.2GB of unused NVIDIA CUDA libraries the CPU-only inference here would
+  never touch, ~4.5GB total for embedding a single 80MB model. Even switching to the
+  CPU-only torch wheel (`--index-url .../whl/cpu`) only got torch itself down to ~770MB.
+  That's a real risk to an already-live Streamlit Cloud free-tier deployment's build size
+  and memory budget, not just local disk space. `fastembed` (Qdrant's library, ONNX
+  runtime instead of PyTorch) serves the exact same model
+  (`sentence-transformers/all-MiniLM-L6-v2`) for ~230MB total including its own
+  dependencies (onnxruntime + scipy/sklearn) - same 384-dim embeddings, same quality
+  (verified: identical top-3 semantic search results, same real supplier notes, both
+  models), a fraction of the footprint. **How to apply:** for any future "add local
+  ML inference" feature on a resource-constrained deployment target, check the actual
+  installed size *before* committing to a library - `du -sh .venv` before/after, not just
+  reading the package's own marketing copy - and specifically watch for a default CUDA
+  wheel getting pulled in for what's actually CPU-only inference.
+- **pgvector + psycopg2: don't trust `register_vector`'s adapter for a plain Python
+  list.** Passing a `list[float]` as a query parameter got adapted to a Postgres
+  `numeric[]` array, not `vector` - `operator does not exist: vector <=> numeric[]`. The
+  robust fix: format the embedding as a literal string (`"[0.1,0.2,...]"`) and cast
+  explicitly in the SQL (`%s::vector`), never relying on an adapter to guess the right
+  type. Confirmed via direct testing before committing to this in `agent/semantic_search.py`.
+- **`supplier_notes` is a separate seed pipeline on purpose** (`postgres/
+  generate_supplier_notes.py` -> `postgres/supplier_notes_seed.sql`, not folded into
+  `generate_seed_data.py`) - this whole feature needs pgvector, which not every Postgres
+  instance has, so `postgres/schema.sql`'s `CREATE EXTENSION IF NOT EXISTS vector;` and
+  the `supplier_notes` table creation are designed to fail *silently* (psql's default
+  non-strict mode continues past an error) rather than break the rest of the schema for
+  someone on a Postgres without it - confirmed this reasoning holds, not just assumed.
+  **Known, accepted gap:** if a user's Postgres genuinely lacks pgvector,
+  `classify_query` can still route a qualitative question to `semantic_search`, which
+  then fails against a missing table - `validate_results`' retry loop would re-attempt,
+  and since the classification is genuinely correct for that question, every retry would
+  likely re-route the same way (the same class of "retrying can't fix a missing
+  capability" issue documented elsewhere in this log). Not fixed further given this only
+  matters for a non-Neon Postgres without pgvector, an edge case the README already
+  flags as skippable.
+- **Live-verified the whole pipeline end-to-end**, not just the isolated search
+  function: asked "Are there any compliance or quality concerns with our suppliers?"
+  through the real agent - `classify_query` correctly chose `query_type:
+  "semantic_search"`, `query_semantic` found the right notes (Continental Rubber's real
+  REACH non-compliance ranked first), and `synthesize` correctly characterized it as a
+  *resolved* past issue while accurately describing the other suppliers' notes as clean
+  records rather than concerns - genuinely good synthesis, not just retrieval working.
+
 ## Non-obvious data design decisions
 
 Needed to write correct Cypher/SQL against this data:

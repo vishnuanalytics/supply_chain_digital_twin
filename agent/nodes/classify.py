@@ -83,6 +83,8 @@ def classify_query(state: AgentState) -> dict:
         "postgres_result": None,
         "postgres_error": None,
         "simulation_result": None,
+        "semantic_result": None,
+        "semantic_error": None,
         "validation_passed": True,
         "reasoning_log": [{
             "node": "classify_query",

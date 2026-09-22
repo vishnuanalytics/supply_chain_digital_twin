@@ -18,6 +18,11 @@ Classify the user's question into exactly one query_type:
   (not hypothetical) situations.
 - "compound_multi_hop": needs both the graph (relationships) AND transactional data
   (inventory/billing/etc.) together to answer, and isn't a what-if simulation.
+- "semantic_search": a QUALITATIVE question about a supplier/vendor's quality, compliance,
+  risk, or sustainability record - certifications, audit findings, recalls, financial stability,
+  labor practices. There's no exact column for this (unlike "which contracts expire in 90 days"),
+  it needs free-text search over audit/quality notes. Trigger this for phrasing like "any quality
+  concerns with...", "compliance issues", "is X certified for...", "financial risk of...".
 
 IMPORTANT: PostgreSQL has NO name columns at all (no supplier/dealer/product name — only IDs like
 'S1', 'D4', 'P2'). If the question names an entity (a supplier, dealer, product, material) BY
@@ -84,6 +89,12 @@ Q: "Show our contract and shipment history with Great Lakes Steel Co."
   "simulation_params": {{}},
   "resolved_question": "Show our contract and shipment history with Great Lakes Steel Co.",
   "reasoning": "names a supplier by name, not ID; Postgres has no name column, so the graph must resolve 'Great Lakes Steel Co' -> its supplier_id before contracts/shipments can be filtered, even though the actual answer is all Postgres data"}}
+
+Q: "Are there any compliance or quality concerns with our suppliers?"
+{{"query_type": "semantic_search", "requires_simulation": false, "simulation_type": null,
+  "simulation_params": {{}},
+  "resolved_question": "Are there any compliance or quality concerns with our suppliers?",
+  "reasoning": "qualitative audit/compliance question, no exact column to filter - needs free-text search over supplier notes"}}
 
 Q: "Which supplier contracts expire in the next 90 days?"
 {{"query_type": "contract_status", "requires_simulation": false, "simulation_type": null,
@@ -304,6 +315,10 @@ def validate_user_prompt(state: dict) -> str:
         parts.append(f"SQL result ({len(state.get('postgres_result') or [])} rows): {state.get('postgres_result')}")
     if state.get("simulation_result"):
         parts.append(f"Simulation result: {state['simulation_result']}")
+    if state.get("semantic_result"):
+        parts.append(f"Semantic search over supplier notes: {state['semantic_result']}")
+    if state.get("semantic_error"):
+        parts.append(f"Semantic search error: {state['semantic_error']}")
     return "\n\n".join(parts)
 
 
@@ -358,6 +373,13 @@ def synthesize_user_prompt(state: dict) -> str:
         parts.append(f"SQL query error: {state['postgres_error']}")
     if state.get("simulation_result"):
         parts.append(f"Simulation result: {state['simulation_result']}")
+    if state.get("semantic_result"):
+        parts.append(
+            "Semantic search over supplier/vendor audit & quality notes (higher similarity = "
+            f"more relevant): {state['semantic_result']}"
+        )
+    if state.get("semantic_error"):
+        parts.append(f"Semantic search error: {state['semantic_error']}")
     if state.get("validation_passed") is False:
         parts.append(
             "Note: automated validation rejected this data on every retry attempt (last reason: "

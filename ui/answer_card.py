@@ -53,6 +53,7 @@ def render_answer_card(state: dict) -> None:
     st.markdown("**Supporting data**")
     neo4j_df = _rows_to_dataframe(state.get("neo4j_result"))
     postgres_df = _rows_to_dataframe(state.get("postgres_result"))
+    semantic_df = _rows_to_dataframe(state.get("semantic_result"))
     sim = state.get("simulation_result")
 
     shown_any_data = False
@@ -61,6 +62,13 @@ def render_answer_card(state: dict) -> None:
         shown_any_data = True
     if postgres_df is not None:
         st.dataframe(postgres_df, width="stretch", hide_index=True)
+        shown_any_data = True
+    if semantic_df is not None:
+        if "similarity" in semantic_df.columns:
+            semantic_df = semantic_df.copy()
+            semantic_df["similarity"] = semantic_df["similarity"].round(3)
+        st.caption("🔎 Semantic search over supplier/vendor audit & quality notes (higher similarity = more relevant)")
+        st.dataframe(semantic_df, width="stretch", hide_index=True)
         shown_any_data = True
     if sim:
         chart = _simulation_chart(sim)
@@ -85,7 +93,10 @@ def render_answer_card(state: dict) -> None:
 
     # Layer 3: graph trace
     st.markdown("**Graph trace**")
-    highlighted_ids = extract_ids(state.get("neo4j_result"), state.get("postgres_result"), state.get("simulation_result"))
+    highlighted_ids = extract_ids(
+        state.get("neo4j_result"), state.get("postgres_result"), state.get("simulation_result"),
+        state.get("semantic_result"),
+    )
     if highlighted_ids:
         try:
             nodes, edges = fetch_highlighted_subgraph(highlighted_ids)

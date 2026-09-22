@@ -1,16 +1,18 @@
-"""Builds the LangGraph agent: classify -> (neo4j and/or postgres, or a
-deterministic simulation) -> [human_approval_gate] -> validate -> synthesize, with a
-bounded retry loop back to classify_query when validation fails.
+"""Builds the LangGraph agent: classify -> (neo4j and/or postgres, a deterministic
+simulation, or a local-embedding semantic search) -> [human_approval_gate] -> validate
+-> synthesize, with a bounded retry loop back to classify_query when validation fails.
 
 Routing:
   classify_query
     -> simulate_scenario                          if requires_simulation
+    -> query_semantic                              if semantic_search
     -> query_neo4j                                if graph_traversal or compound_multi_hop
     -> query_postgres                              if inventory_lookup / cost_analysis / contract_status
   query_neo4j
     -> query_postgres                              if compound_multi_hop (need both stores)
     -> validate_results                            otherwise
   query_postgres -> validate_results
+  query_semantic -> validate_results
   simulate_scenario -> human_approval_gate -> validate_results
     (human_approval_gate is a no-op pass-through unless a disruption sim found a
     high-risk material with a backup supplier on file - see agent/nodes/approval.py)
@@ -28,6 +30,7 @@ from .nodes import (
     human_approval_gate,
     query_neo4j_node,
     query_postgres_node,
+    query_semantic_node,
     simulate_scenario_node,
     synthesize_node,
     validate_results_node,
@@ -41,6 +44,8 @@ POSTGRES_ONLY_TYPES = {"inventory_lookup", "cost_analysis", "contract_status"}
 def _route_after_classify(state: AgentState) -> str:
     if state.get("requires_simulation"):
         return "simulate_scenario"
+    if state.get("query_type") == "semantic_search":
+        return "query_semantic"
     if state.get("query_type") in POSTGRES_ONLY_TYPES:
         return "query_postgres"
     return "query_neo4j"  # graph_traversal and compound_multi_hop both start in Neo4j
@@ -64,6 +69,7 @@ def build_graph():
     builder.add_node("classify_query", classify_query)
     builder.add_node("query_neo4j", query_neo4j_node)
     builder.add_node("query_postgres", query_postgres_node)
+    builder.add_node("query_semantic", query_semantic_node)
     builder.add_node("simulate_scenario", simulate_scenario_node)
     builder.add_node("human_approval_gate", human_approval_gate)
     builder.add_node("validate_results", validate_results_node)
@@ -72,6 +78,7 @@ def build_graph():
     builder.set_entry_point("classify_query")
     builder.add_conditional_edges("classify_query", _route_after_classify, {
         "simulate_scenario": "simulate_scenario",
+        "query_semantic": "query_semantic",
         "query_neo4j": "query_neo4j",
         "query_postgres": "query_postgres",
     })
@@ -80,6 +87,7 @@ def build_graph():
         "validate_results": "validate_results",
     })
     builder.add_edge("query_postgres", "validate_results")
+    builder.add_edge("query_semantic", "validate_results")
     builder.add_edge("simulate_scenario", "human_approval_gate")
     builder.add_edge("human_approval_gate", "validate_results")
     builder.add_conditional_edges("validate_results", _route_after_validate, {

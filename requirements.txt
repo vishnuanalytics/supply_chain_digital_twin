@@ -15,3 +15,5 @@ plotly
 pydeck
 python-dotenv
 pandas
+fastembed
+pgvector

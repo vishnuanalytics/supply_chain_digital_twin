@@ -4,6 +4,12 @@
 -- IDs used in Neo4j (see docs/data_reference.md) so the two stores can be
 -- cross-referenced by ID during agent development.
 
+-- Optional (build step 8 extension): semantic search over free-text supplier notes.
+-- Skips cleanly if the pgvector extension isn't available on this Postgres instance -
+-- everything else in this schema has no dependency on it.
+CREATE EXTENSION IF NOT EXISTS vector;
+
+DROP TABLE IF EXISTS supplier_notes CASCADE;
 DROP TABLE IF EXISTS action_log CASCADE;
 DROP TABLE IF EXISTS invoices CASCADE;
 DROP TABLE IF EXISTS shipments CASCADE;
@@ -121,6 +127,23 @@ CREATE TABLE action_log (
     decided_at    TIMESTAMP NOT NULL DEFAULT now()
 );
 
+-- Free-text audit/quality/risk notes per supplier or third-party vendor (supplier_id
+-- matches the Neo4j Supplier/ThirdPartyVendor id) - the one genuinely unstructured
+-- content in this otherwise fully-structured schema, and the only thing here that
+-- benefits from semantic search rather than an exact Cypher/SQL filter. Embeddings are
+-- generated locally (sentence-transformers' all-MiniLM-L6-v2, 384 dims) - no LLM API
+-- call, no quota - see postgres/generate_supplier_notes.py. No vector index: at this
+-- table's real size (well under 100 rows) a brute-force cosine scan is instant: an
+-- ivfflat/hnsw index would only start earning its keep at a much larger scale.
+CREATE TABLE supplier_notes (
+    note_id       SERIAL PRIMARY KEY,
+    supplier_id   VARCHAR(10) NOT NULL,
+    note_type     VARCHAR(30) NOT NULL,  -- quality | compliance | risk | sustainability
+    note_text     TEXT NOT NULL,
+    noted_date    DATE NOT NULL,
+    embedding     vector(384)
+);
+
 CREATE INDEX idx_po_material ON purchase_orders(material_id);
 CREATE INDEX idx_po_supplier ON purchase_orders(supplier_id);
 CREATE INDEX idx_billing_contract ON monthly_billing(contract_id);
@@ -128,3 +151,4 @@ CREATE INDEX idx_shipments_contract ON shipments(contract_id);
 CREATE INDEX idx_invoices_contract ON invoices(contract_id);
 CREATE INDEX idx_dealer_orders_dealer ON dealer_orders(dealer_id);
 CREATE INDEX idx_dealer_orders_product ON dealer_orders(product_id);
+CREATE INDEX idx_supplier_notes_supplier ON supplier_notes(supplier_id);

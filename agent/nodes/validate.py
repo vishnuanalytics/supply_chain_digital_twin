@@ -17,6 +17,8 @@ def _hard_error(state: AgentState) -> str | None:
     sim_error = (state.get("simulation_result") or {}).get("error")
     if sim_error:
         return f"Simulation failed: {sim_error}"
+    if state.get("semantic_error"):
+        return f"Semantic search failed: {state['semantic_error']}"
     return None
 
 
