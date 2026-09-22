@@ -37,30 +37,74 @@ MUTED_EDGE_COLOR = "#E2E8F0"
 def inject_css() -> None:
     st.markdown(
         f"""
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
         <style>
+        html, body, [class*="css"], .stApp, button, input, textarea {{
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        }}
         .stApp {{ background-color: {NEUTRAL_100}; }}
-        h1, h2, h3 {{ color: {NEUTRAL_900}; }}
+        h1, h2, h3 {{ color: {NEUTRAL_900}; font-weight: 700; letter-spacing: -0.01em; }}
+        p, .stMarkdown, .stCaption {{ color: {NEUTRAL_600}; }}
         .scdt-badge {{
-            display: inline-block; padding: 2px 10px; border-radius: 999px;
-            font-size: 0.8rem; font-weight: 600; margin-left: 8px;
+            display: inline-block; padding: 3px 12px; border-radius: 999px;
+            font-size: 0.78rem; font-weight: 700; letter-spacing: 0.02em; margin-left: 8px;
+            vertical-align: middle;
         }}
         .scdt-card {{
-            background: {NEUTRAL_0}; border: 1px solid {NEUTRAL_200}; border-radius: 12px;
-            padding: 1.25rem 1.5rem; margin-bottom: 1rem;
+            background: {NEUTRAL_0}; border: 1px solid {NEUTRAL_200}; border-radius: 14px;
+            padding: 1.4rem 1.6rem; margin-bottom: 1.1rem;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.05);
+            transition: box-shadow 0.15s ease;
         }}
-        .scdt-answer-text {{ font-size: 1.05rem; line-height: 1.55; color: {NEUTRAL_900}; }}
+        .scdt-card:hover {{
+            box-shadow: 0 2px 4px rgba(15, 23, 42, 0.05), 0 8px 20px rgba(15, 23, 42, 0.07);
+        }}
+        .scdt-answer-text {{ font-size: 1.06rem; line-height: 1.6; color: {NEUTRAL_900}; }}
         .scdt-empty-state {{
-            text-align: center; padding: 2.5rem 1rem; color: {NEUTRAL_600};
-            border: 1px dashed {NEUTRAL_400}; border-radius: 12px; background: {NEUTRAL_0};
+            text-align: center; padding: 2.75rem 1.5rem; color: {NEUTRAL_600};
+            border: 1.5px dashed {NEUTRAL_400}; border-radius: 14px;
+            background: linear-gradient(180deg, {NEUTRAL_0} 0%, {NEUTRAL_100} 100%);
         }}
-        section[data-testid="stSidebar"] {{ background-color: {NEUTRAL_900}; }}
+        /* Sidebar */
+        section[data-testid="stSidebar"] {{
+            background: linear-gradient(180deg, {NEUTRAL_900} 0%, #131c33 100%);
+        }}
         section[data-testid="stSidebar"] * {{ color: {NEUTRAL_100} !important; }}
+        section[data-testid="stSidebar"] hr {{ border-color: rgba(255,255,255,0.12); margin: 1.1rem 0; }}
+        section[data-testid="stSidebar"] [data-testid="stMetricValue"] {{
+            font-size: 1.6rem; font-weight: 700; color: #FFFFFF !important;
+        }}
+        section[data-testid="stSidebar"] [data-testid="stMetricLabel"] {{
+            color: {NEUTRAL_400} !important; text-transform: uppercase;
+            font-size: 0.72rem; letter-spacing: 0.06em;
+        }}
+        section[data-testid="stSidebar"] h3 {{
+            font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.06em;
+            color: {NEUTRAL_400} !important; margin-top: 1.4rem; margin-bottom: 0.5rem;
+        }}
+        /* Buttons - example questions, actions */
         div[data-testid="stButton"] button {{
-            border-radius: 8px; border: 1px solid {NEUTRAL_200};
+            border-radius: 10px; border: 1px solid {NEUTRAL_200}; background: {NEUTRAL_0};
+            transition: all 0.15s ease; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
         }}
         div[data-testid="stButton"] button:hover {{
-            border-color: {ACCENT}; color: {ACCENT};
+            border-color: {ACCENT}; color: {ACCENT}; background: {ACCENT_LIGHT};
+            box-shadow: 0 2px 6px rgba(79, 110, 247, 0.15); transform: translateY(-1px);
         }}
+        div[data-testid="stButton"] button:active {{ transform: translateY(0); }}
+        /* Pills (used for the Graph Explorer type filter) */
+        div[data-testid="stPills"] button {{ border-radius: 999px !important; font-weight: 600; }}
+        /* Tabs */
+        button[data-baseweb="tab"] {{ font-weight: 600; font-size: 0.95rem; }}
+        div[data-baseweb="tab-highlight"] {{ background-color: {ACCENT} !important; height: 3px; }}
+        /* Chat input + text areas */
+        [data-testid="stChatInput"] {{
+            border-radius: 12px; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+        }}
+        /* Dataframes */
+        [data-testid="stDataFrame"] {{ border-radius: 10px; overflow: hidden; }}
         </style>
         """,
         unsafe_allow_html=True,
