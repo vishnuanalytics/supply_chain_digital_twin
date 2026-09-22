@@ -85,3 +85,64 @@ class TestClassifyQueryJevPath:
             for key in ("cypher_query", "neo4j_result", "neo4j_error", "sql_query", "postgres_result",
                         "postgres_error", "simulation_result"):
                 assert result[key] is None
+
+
+class TestConversationHistory:
+    def test_jev_is_skipped_when_history_present_even_if_use_jev_true(self):
+        history = [{"question": "Find a backup supplier for RM3.", "answer": "S6 backs up RM3."}]
+        with patch("agent.nodes.classify.decision_engine.classify_via_jev") as mock_jev, \
+             patch("agent.nodes.classify.llm_client.complete") as mock_complete:
+            mock_complete.return_value = _claude_result(
+                '{"query_type": "inventory_lookup", "requires_simulation": false, '
+                '"simulation_type": null, "simulation_params": {}, '
+                '"resolved_question": "What is S6\'s on-time delivery rate?", "reasoning": "x"}'
+            )
+            result = classify_query({
+                "question": "what's its on-time delivery rate?", "use_jev": True,
+                "conversation_history": history,
+            })
+            mock_jev.assert_not_called()  # Jev can't do reference resolution, so it's skipped
+            assert result["decision_log"][0]["engine_used"] == "claude:groq"
+
+    def test_history_is_passed_into_the_classify_prompt(self):
+        history = [{"question": "Find a backup supplier for RM3.", "answer": "S6 backs up RM3."}]
+        with patch("agent.nodes.classify.llm_client.complete") as mock_complete:
+            mock_complete.return_value = _claude_result(
+                '{"query_type": "inventory_lookup", "requires_simulation": false, '
+                '"simulation_type": null, "simulation_params": {}, '
+                '"resolved_question": "x", "reasoning": "x"}'
+            )
+            classify_query({
+                "question": "what's its on-time delivery rate?", "use_jev": False,
+                "conversation_history": history,
+            })
+            prompt = mock_complete.call_args.kwargs["user"]
+            assert "S6 backs up RM3" in prompt
+
+    def test_resolved_question_is_extracted_from_claude_response(self):
+        with patch("agent.nodes.classify.llm_client.complete") as mock_complete:
+            mock_complete.return_value = _claude_result(
+                '{"query_type": "inventory_lookup", "requires_simulation": false, '
+                '"simulation_type": null, "simulation_params": {}, '
+                '"resolved_question": "What is S6\'s on-time delivery rate?", "reasoning": "x"}'
+            )
+            result = classify_query({"question": "what's its rate?", "use_jev": False})
+            assert result["resolved_question"] == "What is S6's on-time delivery rate?"
+
+    def test_resolved_question_falls_back_to_raw_question_when_absent(self):
+        with patch("agent.nodes.classify.llm_client.complete") as mock_complete:
+            mock_complete.return_value = _claude_result(
+                '{"query_type": "graph_traversal", "requires_simulation": false, '
+                '"simulation_type": null, "simulation_params": {}, "reasoning": "x"}'
+            )
+            result = classify_query({"question": "which materials have one supplier?", "use_jev": False})
+            assert result["resolved_question"] == "which materials have one supplier?"
+
+    def test_jev_success_sets_resolved_question_to_raw_question(self):
+        with patch("agent.nodes.classify.decision_engine.classify_via_jev") as mock_jev:
+            mock_jev.return_value = DecisionResult(
+                value={"query_type": "inventory_lookup", "requires_simulation": False, "simulation_type": None},
+                confidence={"query_type": 0.9}, engine_used="jev", latency_ms=95.0,
+            )
+            result = classify_query({"question": "what's the stock level of RM3?", "use_jev": True})
+            assert result["resolved_question"] == "what's the stock level of RM3?"

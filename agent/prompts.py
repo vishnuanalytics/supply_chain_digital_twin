@@ -64,35 +64,66 @@ Q: "Our aluminum supplier just had a 3-week delay. What's affected?"
 {{"query_type": "compound_multi_hop", "requires_simulation": true, "simulation_type": "disruption",
   "simulation_params": {{"entity_name": "aluminum", "entity_type": "supplier", "delay_days": 21,
   "pct_change": null, "order_qty": null, "timeframe_days": null}},
+  "resolved_question": "Our aluminum supplier just had a 3-week delay. What's affected?",
   "reasoning": "supplier disruption, need downstream impact + inventory buffer"}}
 
 Q: "If steel prices rise 15%, how does that affect margins?"
 {{"query_type": "compound_multi_hop", "requires_simulation": true, "simulation_type": "cost_impact",
   "simulation_params": {{"entity_name": "steel", "entity_type": "raw_material", "delay_days": null,
   "pct_change": 15, "order_qty": null, "timeframe_days": null}},
+  "resolved_question": "If steel prices rise 15%, how does that affect margins?",
   "reasoning": "hypothetical price change, need BOM cost propagation"}}
 
 Q: "Which raw materials have only one supplier?"
 {{"query_type": "graph_traversal", "requires_simulation": false, "simulation_type": null,
-  "simulation_params": {{}}, "reasoning": "pure structural graph question"}}
+  "simulation_params": {{}}, "resolved_question": "Which raw materials have only one supplier?",
+  "reasoning": "pure structural graph question"}}
 
 Q: "Show our contract and shipment history with Great Lakes Steel Co."
 {{"query_type": "compound_multi_hop", "requires_simulation": false, "simulation_type": null,
   "simulation_params": {{}},
+  "resolved_question": "Show our contract and shipment history with Great Lakes Steel Co.",
   "reasoning": "names a supplier by name, not ID; Postgres has no name column, so the graph must resolve 'Great Lakes Steel Co' -> its supplier_id before contracts/shipments can be filtered, even though the actual answer is all Postgres data"}}
 
 Q: "Which supplier contracts expire in the next 90 days?"
 {{"query_type": "contract_status", "requires_simulation": false, "simulation_type": null,
-  "simulation_params": {{}}, "reasoning": "no specific supplier named, pure Postgres date filter"}}
+  "simulation_params": {{}}, "resolved_question": "Which supplier contracts expire in the next 90 days?",
+  "reasoning": "no specific supplier named, pure Postgres date filter"}}
+
+You may also be given recent conversation history (previous question/answer pairs from
+this session). If the CURRENT question uses a pronoun or vague reference to something
+from that history ("it", "that supplier", "the backup one", "them"), rewrite it as a
+fully self-contained question in resolved_question, substituting the concrete entity
+name from history. If the question is already self-contained (or there's no history),
+resolved_question is just the question repeated verbatim - never leave it blank.
+
+Example with history:
+Previous Q: "Find a backup supplier for aluminum alloy billet."
+Previous A: "Diversified Metals & Materials Inc (S6) backs up Aluminum Alloy Billet (RM3)."
+Current Q: "What's their on-time delivery rate?"
+{{"query_type": "inventory_lookup", "requires_simulation": false, "simulation_type": null,
+  "simulation_params": {{}}, "resolved_question": "What is Diversified Metals & Materials Inc's on-time delivery rate?",
+  "reasoning": "'their' refers to the backup supplier named in the previous answer"}}
 
 Respond with ONLY a JSON object in this exact shape, no markdown fences, no explanation:
 {{"query_type": "...", "requires_simulation": false, "simulation_type": null,
-  "simulation_params": {{}}, "reasoning": "one short sentence"}}
+  "simulation_params": {{}}, "resolved_question": "...", "reasoning": "one short sentence"}}
 """
 
 
-def classify_user_prompt(question: str, feedback: str | None = None) -> str:
-    prompt = f"Question: {question}"
+def _format_history(history: list[dict] | None) -> str:
+    if not history:
+        return ""
+    recent = history[-3:]  # enough context for a follow-up, not so much it drowns out the actual question
+    lines = []
+    for turn in recent:
+        lines.append(f'Previous Q: "{turn.get("question", "")}"')
+        lines.append(f'Previous A: "{turn.get("answer", "")}"')
+    return "\n".join(lines) + "\n\n"
+
+
+def classify_user_prompt(question: str, feedback: str | None = None, history: list[dict] | None = None) -> str:
+    prompt = f"{_format_history(history)}Question: {question}"
     if feedback:
         prompt += (
             f"\n\nNote: a previous attempt at this question was rejected for this reason: "
@@ -263,7 +294,8 @@ Respond with ONLY a JSON object, no markdown fences:
 
 
 def validate_user_prompt(state: dict) -> str:
-    parts = [f"Question: {state.get('question')}", f"Query type: {state.get('query_type')}"]
+    question = state.get("resolved_question") or state.get("question")
+    parts = [f"Question: {question}", f"Query type: {state.get('query_type')}"]
     if state.get("cypher_query"):
         parts.append(f"Cypher query run:\n{state['cypher_query']}")
         parts.append(f"Graph result ({len(state.get('neo4j_result') or [])} rows): {state.get('neo4j_result')}")
@@ -309,7 +341,11 @@ Respond with ONLY a JSON object, no markdown fences:
 
 
 def synthesize_user_prompt(state: dict) -> str:
-    parts = [f"Question: {state.get('question')}", f"Query type: {state.get('query_type')}"]
+    # resolved_question (references like "it"/"that supplier" already substituted with
+    # the concrete entity from conversation history) makes for a clearer, self-contained
+    # answer than echoing the raw follow-up phrasing back at the user.
+    question = state.get("resolved_question") or state.get("question")
+    parts = [f"Question: {question}", f"Query type: {state.get('query_type')}"]
     if state.get("cypher_query"):
         parts.append(f"Cypher query run:\n{state['cypher_query']}")
         parts.append(f"Graph result: {state.get('neo4j_result')}")

@@ -8,10 +8,11 @@ def query_postgres_node(state: AgentState) -> dict:
     if state.get("neo4j_result"):
         neo4j_context = str(state["neo4j_result"])
 
+    question = state.get("resolved_question") or state["question"]
     result = llm_client.complete(
         system=prompts.SQL_SYSTEM,
         user=prompts.sql_user_prompt(
-            state["question"], neo4j_context=neo4j_context, feedback=state.get("validation_feedback")
+            question, neo4j_context=neo4j_context, feedback=state.get("validation_feedback")
         ),
         max_tokens=500,
     )

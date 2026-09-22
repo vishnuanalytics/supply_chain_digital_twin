@@ -101,10 +101,16 @@ def get_graph():
     return _graph
 
 
-def ask(question: str, thread_id: str | None = None, use_jev: bool = False) -> AgentState:
+def ask(
+    question: str, thread_id: str | None = None, use_jev: bool = False,
+    conversation_history: list[dict] | None = None,
+) -> AgentState:
     thread_id = thread_id or str(uuid.uuid4())
     run_config = {"configurable": {"thread_id": thread_id}, "run_name": "ask_question"}
     return get_graph().invoke(
-        {"question": question, "reasoning_log": [], "decision_log": [], "retry_count": 0, "use_jev": use_jev},
+        {
+            "question": question, "reasoning_log": [], "decision_log": [], "retry_count": 0,
+            "use_jev": use_jev, "conversation_history": conversation_history or [],
+        },
         run_config,
     )

@@ -6,10 +6,16 @@ from ..utils import extract_json
 def classify_query(state: AgentState) -> dict:
     question = state["question"]
     feedback = state.get("validation_feedback")
+    history = state.get("conversation_history") or []
     decision_log: list[dict] = []
 
     jev_decision = None
-    if state.get("use_jev"):
+    # Jev only handles the categorical routing decisions - it has no way to rewrite a
+    # follow-up's pronouns into a self-contained question (that's genuine freeform
+    # generation), so once there's conversation history to consider, skip straight to
+    # the full Claude path below rather than attempting Jev and getting a routing
+    # decision that ignores the entity a follow-up is actually about.
+    if state.get("use_jev") and not history:
         try:
             jev_decision = decision_engine.classify_via_jev(question, feedback)
             simulation_params = (
@@ -27,6 +33,7 @@ def classify_query(state: AgentState) -> dict:
         query_type = jev_decision.value["query_type"]
         requires_simulation = jev_decision.value["requires_simulation"]
         simulation_type = jev_decision.value["simulation_type"]
+        resolved_question = question  # no history in this branch, so nothing to resolve
         engine_used, model, latency_ms, parse_ok = "jev", config.TYPESAFE_MODEL, jev_decision.latency_ms, True
         decision_log.append({
             "decision": "query_type", "value": query_type, "confidence": jev_decision.confidence,
@@ -35,8 +42,8 @@ def classify_query(state: AgentState) -> dict:
     else:
         result = llm_client.complete(
             system=prompts.CLASSIFY_SYSTEM,
-            user=prompts.classify_user_prompt(question, feedback=feedback),
-            max_tokens=400,
+            user=prompts.classify_user_prompt(question, feedback=feedback, history=history),
+            max_tokens=500,
         )
         try:
             parsed = extract_json(result.content)
@@ -46,12 +53,14 @@ def classify_query(state: AgentState) -> dict:
                 simulation_type = None
             requires_simulation = bool(parsed.get("requires_simulation")) and simulation_type is not None
             simulation_params = parsed.get("simulation_params") or {}
+            resolved_question = parsed.get("resolved_question") or question
             parse_ok = True
         except (ValueError, KeyError):
             # Fail safe: treat as the most capable, if slowest, path rather than erroring out.
             query_type, requires_simulation, simulation_type, simulation_params = (
                 "compound_multi_hop", False, None, {},
             )
+            resolved_question = question
             parse_ok = False
         engine_used, model, latency_ms = result.provider, result.model, result.latency_ms
         decision_log.append({
@@ -64,6 +73,7 @@ def classify_query(state: AgentState) -> dict:
         "requires_simulation": requires_simulation,
         "simulation_type": simulation_type,
         "simulation_params": simulation_params,
+        "resolved_question": resolved_question,
         # Clear any previous attempt's data so a retry down a different path (e.g. Postgres
         # instead of Neo4j) never leaves stale results for validate_results/synthesize to see.
         "cypher_query": None,
@@ -80,7 +90,7 @@ def classify_query(state: AgentState) -> dict:
             "model": model,
             "latency_ms": latency_ms,
             "output": {"query_type": query_type, "requires_simulation": requires_simulation,
-                       "simulation_type": simulation_type},
+                       "simulation_type": simulation_type, "resolved_question": resolved_question},
             "parse_ok": parse_ok,
         }],
         "decision_log": decision_log,

@@ -107,6 +107,12 @@ def render_answer_card(state: dict) -> None:
 
 
 def _render_reasoning(state: dict) -> None:
+    resolved = state.get("resolved_question")
+    if resolved and resolved != state.get("question"):
+        st.markdown(f"**🔗 Resolved as:** _{resolved}_")
+        st.caption("A follow-up reference (\"it\", \"that supplier\", ...) was rewritten using recent conversation history.")
+        st.markdown("---")
+
     decisions = state.get("decision_log") or []
     if decisions:
         st.markdown("**⚡ Decision engine**")

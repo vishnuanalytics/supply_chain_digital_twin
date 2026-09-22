@@ -6,6 +6,21 @@ from typing import Annotated, Any, Optional, TypedDict
 class AgentState(TypedDict, total=False):
     question: str
 
+    # Optional short window of recent {question, answer} pairs from this browser
+    # session, passed in by the UI at invocation time - NOT accumulated by the graph
+    # itself. Conversation memory is deliberately a session-level concern kept separate
+    # from reasoning_log/decision_log (which must stay scoped to a single turn - the
+    # "Show reasoning" panel for answer N would otherwise show every prior turn's steps
+    # too), so it's a plain pass-through value like use_jev, not an operator.add field.
+    conversation_history: Optional[list[dict]]
+
+    # set by classify_query: the question rewritten to be fully self-contained (any
+    # reference like "it"/"that supplier" resolved against conversation_history into
+    # the concrete entity). Every downstream node uses this instead of the raw
+    # `question` when building its own prompt - reference resolution happens exactly
+    # once, in classify_query, rather than being re-solved by every node that needs it.
+    resolved_question: Optional[str]
+
     # set by classify_query
     query_type: str  # graph_traversal | inventory_lookup | cost_analysis | contract_status | compound_multi_hop
     requires_simulation: bool

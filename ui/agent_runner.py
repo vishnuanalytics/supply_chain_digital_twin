@@ -30,13 +30,19 @@ def _stream(initial_input, config, status) -> dict:
     return final_state
 
 
-def run_question(question: str) -> dict:
+def run_question(question: str, conversation_history: list[dict] | None = None) -> dict:
     """Runs the question through the agent with a live, descriptive status indicator
     (not a generic spinner). Returns one of:
       {"state": final_state}                        - answered normally
       {"interrupt": {...}, "thread_id": "..."}       - paused on human_approval_gate;
                                                         pass thread_id to resume_question()
       {"error": "..."}                               - for the caller to render
+
+    `conversation_history` (a list of {"question", "answer"} dicts) is how the Ask tab's
+    follow-up questions ("what about its backup supplier?") get resolved - passed
+    explicitly by the caller (not read from session_state here) so the Billing tab's
+    drill-down questions, which call this same helper, can deliberately opt out and
+    stay free of unrelated chat context.
     """
     thread_id = str(uuid.uuid4())
     config = {"configurable": {"thread_id": thread_id}, "run_name": "ask_question"}
@@ -46,6 +52,7 @@ def run_question(question: str) -> dict:
                 {
                     "question": question, "reasoning_log": [], "decision_log": [], "retry_count": 0,
                     "use_jev": st.session_state.get("use_jev", False),
+                    "conversation_history": conversation_history or [],
                 },
                 config, status,
             )

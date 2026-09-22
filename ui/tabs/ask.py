@@ -16,6 +16,16 @@ EXAMPLE_QUESTIONS = [
 ]
 
 
+def _remember(question: str, result: dict) -> None:
+    """Feeds this turn's Q&A into conversation_history so a follow-up like "what about
+    its backup supplier?" can be resolved next time - kept separate from the `history`
+    list (which drives the rendered cards and can include error turns that shouldn't
+    pollute the agent's own context)."""
+    answer = (result.get("state") or {}).get("answer")
+    if answer:
+        st.session_state["conversation_history"].append({"question": question, "answer": answer})
+
+
 def _render_approval_prompt(pending: dict) -> None:
     """Shown instead of the normal example-questions/history view whenever
     human_approval_gate has paused a run (build step 8) - the question isn't answered
@@ -37,15 +47,31 @@ def _render_approval_prompt(pending: dict) -> None:
         st.session_state["history"].append({"question": pending["question"], **result})
         if "state" in result:
             st.session_state["last_reasoning_log"] = result["state"].get("reasoning_log")
+        _remember(pending["question"], result)
         st.rerun()
 
 
-def render_ask_tab() -> None:
-    st.markdown("### Ask a question")
-    st.caption("Try one of these, or type your own question below.")
+def _reset_conversation() -> None:
+    st.session_state["history"] = []
+    st.session_state["conversation_history"] = []
+    st.session_state.pop("pending_approval", None)
 
-    if "history" not in st.session_state:
-        st.session_state["history"] = []
+
+def render_ask_tab() -> None:
+    header_col, reset_col = st.columns([5, 1])
+    header_col.markdown("### Ask a question")
+    reset_col.button(
+        "🔄 New conversation", width="stretch", key="reset_conversation",
+        help="Clears follow-up context (e.g. \"its backup supplier\") and the visible history below.",
+        on_click=_reset_conversation,
+    )
+    st.caption(
+        "Try one of these, or type your own question below. Follow-ups work within a "
+        "session - e.g. ask about a supplier, then \"what's its on-time delivery rate?\""
+    )
+
+    st.session_state.setdefault("history", [])
+    st.session_state.setdefault("conversation_history", [])
 
     pending_approval = st.session_state.get("pending_approval")
     if pending_approval:
@@ -63,7 +89,7 @@ def render_ask_tab() -> None:
 
     pending = st.session_state.pop("pending_question", None)
     if pending:
-        result = run_question(pending)
+        result = run_question(pending, conversation_history=st.session_state["conversation_history"])
         if "interrupt" in result:
             st.session_state["pending_approval"] = {**result, "question": pending}
             st.rerun()
@@ -71,6 +97,7 @@ def render_ask_tab() -> None:
             st.session_state["history"].append({"question": pending, **result})
             if "state" in result:
                 st.session_state["last_reasoning_log"] = result["state"].get("reasoning_log")
+            _remember(pending, result)
 
     if not st.session_state["history"]:
         st.markdown(
