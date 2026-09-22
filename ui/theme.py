@@ -89,6 +89,33 @@ def inject_css() -> None:
             font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.06em;
             color: {NEUTRAL_400} !important; margin-top: 1.4rem; margin-bottom: 0.5rem;
         }}
+        /* The blanket `* {{ color: NEUTRAL_100 }}` above is correct for plain text sitting
+        directly on the sidebar's dark background, but buttons (New chat, past-session
+        list) and the model picker's selectbox both keep their own white/light control
+        background even inside the sidebar - inheriting near-white text on top of that
+        made them unreadable (white-on-white). A button's visible label isn't text
+        directly on <button> though - Streamlit nests it several levels deep (button >
+        div > span > span > div.stMarkdownContainer > p), and the blanket rule's `*`
+        matches each of those elements DIRECTLY (not just via inheritance), so styling
+        only the outer <button> was not enough - the `!important` on that inner <p>
+        still won. Every rule below ends in its own `*` for the same reason: to reach
+        past the blanket rule's direct match, not just override inherited color. */
+        section[data-testid="stSidebar"] div[data-testid="stButton"] button,
+        section[data-testid="stSidebar"] div[data-testid="stButton"] button * {{
+            color: {NEUTRAL_900} !important;
+        }}
+        section[data-testid="stSidebar"] div[data-testid="stButton"] button:hover,
+        section[data-testid="stSidebar"] div[data-testid="stButton"] button:hover * {{
+            color: {ACCENT} !important;
+        }}
+        /* The model picker selectbox: this Streamlit version renders it as a
+        react-aria ComboBox (a plain <input> carrying the displayed value as its
+        `value` attribute, not textContent) rather than a BaseWeb [data-baseweb="select"]
+        element - inspected the real DOM directly rather than assuming the older
+        structure, since guessing wrong here would silently match nothing. */
+        section[data-testid="stSidebar"] div[data-testid="stSelectbox"] input {{
+            color: {NEUTRAL_900} !important;
+        }}
         /* Buttons - example questions, actions */
         div[data-testid="stButton"] button {{
             border-radius: 10px; border: 1px solid {NEUTRAL_200}; background: {NEUTRAL_0};

@@ -601,3 +601,61 @@ way to dodge its daily cap).
 New tests: `TestManualOverride`/`TestKnownModels`/`TestCallGemini` in
 `tests/test_llm_client.py`, plus `tests/test_model_picker.py` for
 `_available_model_choices()`/`current_llm_override()` - 138 total, all green.
+
+## Sidebar white-on-white contrast bug, and the "model resets to Auto" red herring
+## — 2026-09-22
+
+User report, with a screenshot: a past-session button ("How many suppliers we have")
+rendered completely unreadable (white text on white background), and separately "once
+I ask second question the model selection is going back to auto."
+
+**First isolated whether the second complaint was a real state bug or the same
+rendering issue**, since guessing wrong would mean fixing the wrong thing: wrote a
+deterministic `AppTest` (mocked graph, no live LLM needed) that selects a specific
+model in the sidebar, asks two questions in sequence, and checks
+`at.session_state["llm_choice"]` after each. It never changed - stayed
+`"gemini::gemini-3.6-flash"` through both questions. **So there was only one real bug,
+not two** - the selectbox becoming unreadable after a rerun looks exactly like "it
+reset to Auto" even though the underlying value never moved. Worth remembering this
+diagnostic move: when two symptoms could share a root cause, check whether the STATE
+actually changed before spending time on two separate fixes.
+
+**Root cause, found by walking the real DOM in a real browser (not the CSS source),
+in two rounds** because my first attempted fix was itself based on a wrong assumption
+about Streamlit's internal markup:
+
+1. `ui/theme.py`'s sidebar styling had `section[data-testid="stSidebar"] * {{ color:
+   NEUTRAL_100 !important; }}` - correct for plain text sitting directly on the dark
+   sidebar background, but buttons and the selectbox keep their own white control
+   background even inside the sidebar, so this forced white-on-white there.
+2. **First fix attempt failed**: added `section[data-testid="stSidebar"] div[data-
+   testid="stButton"] button {{ color: NEUTRAL_900 !important; }}`, which raised the
+   right specificity but didn't work. Inspecting the live DOM (`getComputedStyle` at
+   each level) showed why: the `<button>` element itself DID get the fix, but
+   Streamlit nests the actual visible label several levels deeper (`button > div >
+   span > span > div.stMarkdownContainer > p`), and the blanket `*` rule matches that
+   inner `<p>` **directly**, not just via inheritance from `<button>` - a directly-
+   matched `!important` rule beats an inherited value regardless of the ancestor's own
+   color. Fix: every override rule needs its own trailing `*` too (`button, button *`),
+   to directly out-specificity the blanket rule at every nesting level, not just style
+   the outer element and hope it cascades down.
+3. **Second fix attempt also initially failed** for the model picker specifically:
+   assumed the selectbox was a BaseWeb `[data-baseweb="select"]` element (an
+   assumption from general Streamlit knowledge, not checked against this actual
+   installed version) - that selector matched zero elements. The real DOM (checked via
+   `outerHTML`) showed this Streamlit version (1.64.0) implements `st.selectbox` as a
+   **react-aria ComboBox**: a plain `<input>` element carrying the displayed value as
+   its `value` *attribute*, not as `textContent` - a `textContent`-based DOM search for
+   the visible label found nothing for exactly that reason. Fix: target
+   `div[data-testid="stSelectbox"] input` directly.
+
+**How to apply:** don't assume a specific Streamlit version's internal DOM structure
+(BaseWeb classes, `data-baseweb` attributes, where a widget's real text content lives)
+from general knowledge - it has changed before and will again. When a CSS fix doesn't
+visibly work, inspect the ACTUAL rendered DOM (`getComputedStyle`, `outerHTML`) in a
+real browser before writing a second guess; specificity math is only useful once the
+selector is confirmed to match the right element at all.
+
+Verified: both the "How many suppliers we have" button and a genuinely-selected model
+("Gemini — gemini-3.6-flash") render fully legible (dark text, `rgb(15,23,42)`, on
+white) after the fix, confirmed via computed style, not just a screenshot glance.
