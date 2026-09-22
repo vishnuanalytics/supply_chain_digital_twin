@@ -91,27 +91,30 @@ def render_answer_card(state: dict) -> None:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Layer 3: graph trace
-    st.markdown("**Graph trace**")
-    highlighted_ids = extract_ids(
-        state.get("neo4j_result"), state.get("postgres_result"), state.get("simulation_result"),
-        state.get("semantic_result"),
-    )
-    if highlighted_ids:
-        try:
-            nodes, edges = fetch_highlighted_subgraph(highlighted_ids)
-        except Exception:  # noqa: BLE001 - Neo4j going down mid-render shouldn't crash the card
-            st.caption("⚠️ Couldn't load the graph trace right now - Neo4j may be unreachable.")
-        else:
-            if nodes:
-                agraph(nodes=nodes, edges=edges, config=default_config(height=420))
+    # Layer 3: graph trace - collapsed by default, same as "Show reasoning" below.
+    # Rendering the vis-network graph is the most expensive part of this card, and it's
+    # supporting evidence a user checks occasionally, not something needed to read every
+    # answer - collapsing it by default keeps the primary answer text the focal point.
+    with st.expander("🕸️ Show graph trace", expanded=False):
+        highlighted_ids = extract_ids(
+            state.get("neo4j_result"), state.get("postgres_result"), state.get("simulation_result"),
+            state.get("semantic_result"),
+        )
+        if highlighted_ids:
+            try:
+                nodes, edges = fetch_highlighted_subgraph(highlighted_ids)
+            except Exception:  # noqa: BLE001 - Neo4j going down mid-render shouldn't crash the card
+                st.caption("⚠️ Couldn't load the graph trace right now - Neo4j may be unreachable.")
             else:
-                st.caption("No graph nodes matched this answer's entities.")
-    else:
-        st.caption("This answer didn't traverse the graph directly (e.g. a pure billing/inventory lookup).")
+                if nodes:
+                    agraph(nodes=nodes, edges=edges, config=default_config(height=420))
+                else:
+                    st.caption("No graph nodes matched this answer's entities.")
+        else:
+            st.caption("This answer didn't traverse the graph directly (e.g. a pure billing/inventory lookup).")
 
     # Layer 4: collapsed reasoning
-    with st.expander("Show reasoning", expanded=False):
+    with st.expander("🔍 Show reasoning", expanded=False):
         _render_reasoning(state)
 
     st.markdown("</div>", unsafe_allow_html=True)

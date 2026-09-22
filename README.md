@@ -61,9 +61,12 @@ before giving up; `synthesize` writes the final plain-English answer.
 ## The app
 
 Four tabs, each answer rendered as a consistent 3-layer card (plain-English
-answer + confidence, supporting data table/chart, and a graph-trace
-visualization), with a collapsed "Show reasoning" panel underneath revealing
-the actual Cypher/SQL and which LLM engine/latency answered each step.
+answer + confidence, then a supporting data table/chart) with two collapsed
+panels underneath: "🕸️ Show graph trace" (the subgraph the answer's entities
+came from) and "🔍 Show reasoning" (the actual Cypher/SQL and which LLM
+engine/latency answered each step). Collapsed by default so the answer stays
+the focal point - both are supporting evidence to check, not something
+needed to read every response.
 
 | Tab | What it does |
 |---|---|
@@ -224,7 +227,7 @@ had zero effect.
 Built after the spec's own Definition of Done was already met, specifically to
 show a few more things an AI-engineering role usually cares about:
 
-- **CI + a real unit test suite** — 138 pytest tests (`tests/`) covering the
+- **CI + a real unit test suite** — 143 pytest tests (`tests/`) covering the
   deterministic logic the eval harness alone doesn't isolate: JSON-output
   parsing, `simulate_scenario`'s what-if math, `_assert_read_only`'s
   injection-resilience (see below), the LLM provider fallback chain, and the

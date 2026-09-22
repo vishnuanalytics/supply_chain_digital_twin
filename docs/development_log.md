@@ -659,3 +659,30 @@ selector is confirmed to match the right element at all.
 Verified: both the "How many suppliers we have" button and a genuinely-selected model
 ("Gemini — gemini-3.6-flash") render fully legible (dark text, `rgb(15,23,42)`, on
 white) after the fix, confirmed via computed style, not just a screenshot glance.
+
+## Graph trace collapsed into its own dropdown — 2026-09-22
+
+Direct user request: "Can you add drop down option for the knowledge graph tace to
+like, show reasoning." `ui/answer_card.py`'s Layer 3 (the vis-network subgraph
+visualization) used to render inline and always-open, right below the supporting data
+table - now wrapped in its own `st.expander("🕸️ Show graph trace", expanded=False)`,
+matching Layer 4's existing `st.expander("🔍 Show reasoning", ...)` pattern (which also
+got the same icon-prefix treatment for visual consistency). Mechanical change - the
+fetch/render logic inside is untouched, just re-indented into the `with` block.
+
+Reasoning voiced back to the user in the preceding conversation turn (they'd asked how
+to justify showing tables/graph/reasoning at all to an interviewer): the graph trace is
+supporting evidence a user checks occasionally, not something needed to read every
+answer - collapsing it by default keeps the primary answer text the focal point, same
+progressive-disclosure argument already applied to the reasoning panel.
+
+Verified via `AppTest` (5 new tests, `tests/test_answer_card.py`, 143 total): both
+expanders present and collapsed by default, expanding the graph trace panel doesn't
+raise - including one run against the *real* live Neo4j (not mocked) to rule out any
+interaction between the new expander wrapping and `fetch_highlighted_subgraph`'s actual
+query. A live-browser round-trip (load a past session via the sidebar, click to
+expand) was attempted but Playwright's click on the sidebar's session-list button was
+flaky in this sandbox for reasons unrelated to the change itself (`load_chat_session`
+was independently confirmed correct via a bare script, returning real persisted rows)
+- the AppTest coverage above was judged sufficient rather than continuing to fight
+browser-automation flakiness for a low-risk, mechanical UI change.
