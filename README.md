@@ -141,12 +141,30 @@ python3 -m agent.cli "Which raw materials have only one supplier?"
 ```
 
 To run the evaluation harness (18 questions checked against ground-truth
-assertions derived from the live data):
+assertions derived from the live data — needs live Neo4j/Postgres/LLM-provider
+credentials, and consumes real free-tier quota, so this isn't run in CI):
 
 ```bash
 python3 eval/run_eval.py                  # all 18
 python3 eval/run_eval.py --ids <id1,id2>  # a subset
 ```
+
+## Testing
+
+A `pytest` suite (`tests/`) covers the deterministic logic directly: LLM-output
+parsing, `simulate_scenario`'s what-if math, the read-only/upsert-validation
+guards in `agent/db.py`, the multi-provider fallback chain, the Jev
+decision-engine fallback, and the eval harness's own answer-checking logic.
+No live database or LLM credentials needed — every external call is mocked —
+so this runs the same way locally and in CI:
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs this suite on
+every push and pull request.
 
 ## Project status
 
