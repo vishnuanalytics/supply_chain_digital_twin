@@ -61,7 +61,7 @@ before giving up; `synthesize` writes the final plain-English answer.
 ## The app
 
 Five pages, each with its own real, bookmarkable URL (`/graph-explorer`,
-`/billing`, `/sales`, `/about` — via `st.navigation`, not `st.tabs()`, so
+`/billing`, `/sales`, `/architecture` — via `st.navigation`, not `st.tabs()`, so
 browser back/forward and sharing a link to a specific page both just work).
 Each answer renders as a consistent 3-layer card (plain-English answer +
 confidence, then a supporting data table/chart) with two collapsed panels
@@ -77,7 +77,7 @@ needed to read every response.
 | 🕸️ **Graph Explorer** | The full supply chain graph — zoomable, colored by entity type, filterable by type, click any node to zoom into its connections (1-3 hops), hover for full properties, and import/export the graph as JSON to add new suppliers/materials/contracts etc. without writing Cypher |
 | 📄 **Contracts & Billing** | Active contracts with color-coded expiry warnings, this month's billing summary, a per-contract shipment Gantt chart (click a bar for an instant shipment detail panel with a computed recommended action), and click-a-row drill-down into the same 3-layer card |
 | 📈 **Sales** | The outbound mirror of Contracts & Billing — revenue and units sold, a 6-month trend, "where we're selling" by region (crosses both stores: revenue lives in Postgres, Dealer→Region only in Neo4j), and the same click-to-drill-down |
-| ℹ️ **About / Architecture** | This project's purpose and the diagram above, for technical reviewers |
+| ℹ️ **Architecture** | This project's purpose, the exact-match answer cache, and the diagram above, for technical reviewers |
 
 <table>
 <tr>
@@ -302,7 +302,7 @@ show a few more things an AI-engineering role usually cares about:
   URL with no sub-paths, no matter which tab you were on. Migrated from
   `st.tabs()` to Streamlit's native `st.navigation`/`st.Page` (`position="top"`
   keeps the same horizontal icon-bar look) so each page gets a real,
-  bookmarkable URL (`/graph-explorer`, `/billing`, `/sales`, `/about`) with
+  bookmarkable URL (`/graph-explorer`, `/billing`, `/sales`, `/architecture`) with
   working browser back/forward. Layered on top: `?q=<question>` asks it
   immediately (share a link straight to a specific answer), `?session=<id>`
   opens a specific past conversation, `?node=<id>` opens Graph Explorer
@@ -342,6 +342,19 @@ show a few more things an AI-engineering role usually cares about:
   columns (`carrier`, `freight_mode`, `tracking_number`, `delay_reason`) and
   `contracts` columns (`account_manager`, `auto_renew`) in
   `postgres/generate_seed_data.py`.
+- **Exact-match answer cache** — a repeat question (case/whitespace aside)
+  skips the LLM/graph entirely and returns its previous answer straight from
+  a new Postgres `query_cache` table, cutting real LLM cost for frequently
+  asked questions. Deliberately **exact-match only, never semantic/fuzzy** —
+  a similarity match can conflate two different questions (*"price of RM1"*
+  vs. *"price of RM2"*) and hand back a confidently wrong cached answer, and
+  this app must never do that. Only applies to standalone questions with no
+  conversation context (a follow-up like *"what about its backup supplier?"*
+  means something different depending on what came before it, so it's never
+  cached or served from cache), and the whole cache is cleared automatically
+  the moment the underlying graph changes (a Graph Explorer import), so a
+  cached answer can never go stale. See the Architecture page's diagram for
+  where the cache check sits in the flow.
 
 ## Deploying
 

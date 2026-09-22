@@ -1,12 +1,14 @@
-"""About / Architecture tab: what this is, why it exists, and how a question flows
-through the system - for technical viewers evaluating the project.
+"""Architecture tab: what this is, why it exists, and how a question flows through the
+system - for technical viewers evaluating the project.
 """
 import json
 
 import streamlit as st
 
 _DIAGRAM_SOURCE = r"""flowchart TD
-    Q["User question"] --> CQ["classify_query<br/>(LLM: routes the question)"]
+    Q["User question"] --> CACHE{"Asked verbatim<br/>before?"}
+    CACHE -->|"yes - exact match"| A["Plain-English answer +<br/>confidence + reasoning trace"]
+    CACHE -->|"no"| CQ["classify_query<br/>(LLM: routes the question)"]
     CQ -->|"graph_traversal /<br/>compound_multi_hop"| QN["query_neo4j<br/>(LLM writes Cypher)"]
     CQ -->|"inventory / cost /<br/>contract_status / sales"| QP["query_postgres<br/>(LLM writes SQL)"]
     CQ -->|"disruption / capacity /<br/>cost_impact"| SIM["simulate_scenario<br/>(deterministic Python)"]
@@ -16,7 +18,8 @@ _DIAGRAM_SOURCE = r"""flowchart TD
     SIM --> VR
     VR -->|"invalid, retries left"| CQ
     VR -->|"valid, or gave up"| SY["synthesize<br/>(LLM writes the final answer)"]
-    SY --> A["Plain-English answer +<br/>confidence + reasoning trace"]
+    SY --> A
+    SY -.-> QC[("query_cache<br/>(Postgres)")]
 
     QN -.-> N4J[("Neo4j AuraDB<br/>(relationships)")]
     QP -.-> PG[("PostgreSQL / Neon<br/>(transactions)")]
@@ -24,9 +27,11 @@ _DIAGRAM_SOURCE = r"""flowchart TD
     classDef llm fill:#E8ECFE,stroke:#4F6EF7,color:#0F172A;
     classDef det fill:#FEF3C7,stroke:#F59E0B,color:#0F172A;
     classDef store fill:#F1F5F9,stroke:#94A3B8,color:#0F172A;
+    classDef cache fill:#DCFCE7,stroke:#16A34A,color:#0F172A;
     class CQ,QN,QP,SY llm;
     class SIM det;
     class N4J,PG store;
+    class CACHE,QC cache;
 """
 
 # This diagram lives inside a Streamlit tab panel, and Streamlit renders every tab's
@@ -76,7 +81,7 @@ _MERMAID_HTML = f"""
 """
 
 
-def render_about_tab() -> None:
+def render_architecture_tab() -> None:
     st.markdown("### About this project")
     st.markdown(
         """
@@ -94,14 +99,26 @@ through a self-correction step before being trusted.
     )
 
     st.markdown("### How a question is answered")
-    st.iframe(_MERMAID_HTML, height=560)
+    st.markdown(
+        """
+Every question first checks an **exact-match answer cache** (green, above) - if this
+literal question (case/whitespace aside) has been asked before, the cached answer comes
+back instantly with no LLM call at all. This is deliberately **exact-match only, never
+semantic/fuzzy** - a similarity match can conflate two different questions (e.g. "price
+of RM1" vs "price of RM2") and hand back a confidently wrong answer, which this app must
+never do. The cache is cleared automatically the moment the underlying graph data
+changes (a Neo4j import via Graph Explorer), so a cached answer can never go stale.
+        """
+    )
+    st.iframe(_MERMAID_HTML, height=600)
 
     st.markdown("### Tech stack")
     st.markdown(
         """
 - **LangGraph** for the agent's control flow (routing, retries, the graph shown above)
 - **Neo4j** (AuraDB) for supplier/product/contract relationships
-- **PostgreSQL** (Neon) for transactional data — inventory, billing, shipments, invoices, sales
+- **PostgreSQL** (Neon) for transactional data — inventory, billing, shipments, invoices,
+  sales, and the exact-match answer cache
 - **Groq / OpenRouter / Anthropic / Gemini** as swappable LLM providers, tried in order
   with automatic fallback (or picked manually via the sidebar), so the app runs on
   free-tier models by default

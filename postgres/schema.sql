@@ -9,6 +9,7 @@
 -- everything else in this schema has no dependency on it.
 CREATE EXTENSION IF NOT EXISTS vector;
 
+DROP TABLE IF EXISTS query_cache CASCADE;
 DROP TABLE IF EXISTS chat_history CASCADE;
 DROP TABLE IF EXISTS supplier_notes CASCADE;
 DROP TABLE IF EXISTS action_log CASCADE;
@@ -182,6 +183,24 @@ CREATE TABLE chat_history (
 );
 CREATE INDEX idx_chat_history_session ON chat_history(session_id);
 CREATE INDEX idx_chat_history_created ON chat_history(created_at DESC);
+
+-- Exact-match answer cache: skips the LLM/graph entirely for a question that's been
+-- asked before, verbatim (case/whitespace-insensitive only - see agent/db.py's
+-- _cache_key). Deliberately NOT semantic/fuzzy - a similarity match can conflate two
+-- different questions (e.g. "price of RM1" vs "price of RM2") and hand back a
+-- confidently wrong cached answer, which this app must never do. cache_key is a
+-- sha256 hex digest of the normalized question text, not the raw text itself, so an
+-- arbitrarily long question never risks exceeding a column length limit.
+-- Cleared entirely (agent/db.py's invalidate_query_cache) on the only live write path
+-- that can change what a cached answer should say - a Neo4j graph import
+-- (ui/graph_import_export.py). Not seeded - starts empty, fills as real questions
+-- repeat.
+CREATE TABLE query_cache (
+    cache_key    VARCHAR(64) PRIMARY KEY,
+    question     TEXT NOT NULL,
+    state_json   JSONB NOT NULL,
+    created_at   TIMESTAMP NOT NULL DEFAULT now()
+);
 
 -- Free-text audit/quality/risk notes per supplier or third-party vendor (supplier_id
 -- matches the Neo4j Supplier/ThirdPartyVendor id) - the one genuinely unstructured

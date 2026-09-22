@@ -6,7 +6,7 @@ import uuid
 
 import streamlit as st
 
-from agent import llm_client
+from agent import db, llm_client
 from agent.graph import get_graph
 from ui.sidebar import current_llm_override
 
@@ -45,8 +45,28 @@ def run_question(question: str, conversation_history: list[dict] | None = None) 
     follow-up questions ("what about its backup supplier?") get resolved - passed
     explicitly by the caller (not read from session_state here) so the Billing tab's
     drill-down questions, which call this same helper, can deliberately opt out and
-    stay free of unrelated chat context.
+    stay free of unrelated chat context. That same "no conversation context" condition
+    is also what makes a question safe to serve from the exact-match answer cache below
+    - a question asked in the middle of a conversation can mean something different
+    depending on what came before it, so only a standalone question is ever cached or
+    served from cache.
     """
+    # Exact-match cache: skips the LLM/graph entirely for a question asked verbatim
+    # before (case/whitespace-insensitive only, see agent/db.py's _cache_key) -
+    # deliberately never a semantic/fuzzy match, since two different questions can
+    # embed close enough to collide and this app must never return a plausible-but-
+    # wrong cached answer. Caching itself must never block a real answer, so a DB
+    # hiccup here is swallowed and just falls through to a normal live run.
+    if not conversation_history:
+        try:
+            cached_state = db.get_cached_answer(question)
+        except Exception:
+            cached_state = None
+        if cached_state is not None:
+            with st.status("Answer ready (repeat question - served from cache, no LLM call)", state="complete"):
+                pass
+            return {"state": cached_state, "cached": True}
+
     thread_id = str(uuid.uuid4())
     config = {"configurable": {"thread_id": thread_id}, "run_name": "ask_question"}
     # Honors the sidebar's manual model picker for every LLM call this question makes -
@@ -69,6 +89,11 @@ def run_question(question: str, conversation_history: list[dict] | None = None) 
                     status.update(label="Waiting for your approval...", state="running")
                     return {"interrupt": final_state["__interrupt__"][0].value, "thread_id": thread_id}
                 status.update(label="Answer ready", state="complete")
+                if not conversation_history:
+                    try:
+                        db.cache_answer(question, final_state)
+                    except Exception:
+                        pass
                 return {"state": final_state}
             except Exception as exc:  # noqa: BLE001 - surfaced as a designed error state, not a crash
                 status.update(label="Ran into a problem", state="error")

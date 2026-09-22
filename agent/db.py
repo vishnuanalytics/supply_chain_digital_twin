@@ -4,6 +4,7 @@ The agent generates Cypher/SQL from an LLM, so every query passes through
 `_assert_read_only` first — this is a Q&A agent over a seeded demo dataset and
 must never let a hallucinated or prompt-injected query mutate it.
 """
+import hashlib
 import json
 import re
 
@@ -145,6 +146,57 @@ def get_chat_session(session_id: str) -> list[dict]:
         "WHERE session_id = %s ORDER BY created_at ASC",
         (session_id,),
     )
+
+
+def _cache_key(question: str) -> str:
+    """Normalizes case/whitespace only (never meaning) - this is an EXACT-match cache
+    key, not a semantic one. See query_cache's own comment in postgres/schema.sql for
+    why fuzzy matching is deliberately not used here."""
+    normalized = " ".join(question.strip().lower().split())
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def get_cached_answer(question: str) -> dict | None:
+    """Returns a previously-cached answer's full state dict only if this exact question
+    (case/whitespace-insensitive) has been asked before, or None on a cache miss."""
+    rows = run_sql("SELECT state_json FROM query_cache WHERE cache_key = %s", (_cache_key(question),))
+    return rows[0]["state_json"] if rows else None
+
+
+def cache_answer(question: str, state: dict) -> None:
+    """Stores a successfully-answered question's full state for exact-match reuse.
+    `state` is JSON-serialized the same way log_chat_turn does (default=str, for
+    Decimal/date values from Postgres rows) - ON CONFLICT so re-caching the same
+    question just refreshes it rather than erroring."""
+    conn = get_postgres_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO query_cache (cache_key, question, state_json)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (cache_key) DO UPDATE SET state_json = EXCLUDED.state_json, created_at = now()
+                """,
+                (_cache_key(question), question.strip(), json.dumps(state, default=str)),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def invalidate_query_cache() -> None:
+    """Clears the whole answer cache - called after the one live write path that can
+    change what a cached answer should say (a Neo4j graph import, see
+    ui/graph_import_export.py). A stale cache entry silently returning wrong data would
+    be worse than no cache at all, so this clears everything rather than trying to
+    guess which cached questions a given import could have affected."""
+    conn = get_postgres_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("TRUNCATE query_cache")
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # Every Cypher string above this point is fixed application code, safe to write. From

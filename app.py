@@ -16,7 +16,7 @@ except Exception:  # noqa: BLE001 - no secrets configured is the normal local ca
     pass
 
 from ui.sidebar import render_sidebar
-from ui.tabs.about import render_about_tab
+from ui.tabs.architecture import render_architecture_tab
 from ui.tabs.ask import render_ask_tab
 from ui.tabs.billing import render_billing_tab
 from ui.tabs.graph_explorer import render_graph_explorer_tab
@@ -46,7 +46,7 @@ pg = st.navigation(
         st.Page(render_graph_explorer_tab, title="Graph Explorer", icon="🕸️", url_path="graph-explorer"),
         st.Page(render_billing_tab, title="Contracts & Billing", icon="📄", url_path="billing"),
         st.Page(render_sales_tab, title="Sales", icon="📈", url_path="sales"),
-        st.Page(render_about_tab, title="About / Architecture", icon="ℹ️", url_path="about"),
+        st.Page(render_architecture_tab, title="Architecture", icon="ℹ️", url_path="architecture"),
     ],
     position="top",
 )

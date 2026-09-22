@@ -1025,3 +1025,70 @@ number, delay reason) and contract/supplier panel (value, terms, account manager
 auto-renew, supplier on-time rate, related invoice status) - screenshot confirmed the
 visual layout (clean two-column dialog, color-coded timeline legend, dashed "Today"
 reference line) matches the text content.
+
+## Exact-match answer cache, and About/Architecture renamed to Architecture — 2026-09-22
+
+**User's question, then a hard constraint:** asked how frequently-asked questions
+could be cached to cut LLM cost. First proposal was a semantic cache (embed the
+question via the fastembed/pgvector infra already built for `supplier_notes`,
+threshold on cosine similarity) - user's response ruled that out flatly: *"If there
+is a chance that we give wrong information then we don't need to do it."* A semantic
+match can conflate two different questions that embed close together (e.g. "price of
+RM1" vs "price of RM2") and return a confidently wrong cached answer, which is an
+unacceptable failure mode for this app regardless of the cost savings. **How to
+apply: this user's correctness bar for this app is absolute, not a tunable threshold
+- when a technique's failure mode is "occasionally confidently wrong" rather than
+"occasionally slow/expensive," it's disqualified outright, not just deprioritized.**
+
+**The safe version implemented instead: exact-match only.** New `query_cache`
+Postgres table (`cache_key` a sha256 hex digest of the normalized - lowercased,
+whitespace-collapsed, never meaning-altered - question text, `question`, `state_json`,
+`created_at`). `agent/db.py` gained `_cache_key`/`get_cached_answer`/`cache_answer`/
+`invalidate_query_cache`. Wired into the one shared entry point both the Ask tab and
+the Billing drill-down already call, `ui/agent_runner.py`'s `run_question()`: a cache
+lookup happens before the graph runs at all, and a successful answer is cached
+afterward - both steps skipped entirely whenever `conversation_history` is non-empty,
+since the exact same question text can mean something different depending on what
+came before it (a follow-up like "what about its backup supplier?" is deliberately
+never cached or served from cache, matching the existing reasoning for why the
+Billing drill-down opts out of conversation context in the first place). Caching
+itself is wrapped in try/except and must never block a real answer, same discipline as
+`log_chat_turn`'s own best-effort persistence.
+
+**Invalidation**: the whole cache is `TRUNCATE`d whenever a Neo4j graph import
+actually changes something (`ui/graph_import_export.py`'s `import_graph_json()`,
+alongside its existing `fetch_full_graph`/`export_graph_json`/`_graph_counts` cache
+clears) - the one live write path that can make a previously-cached answer wrong (e.g.
+a newly-added backup supplier). Clears the whole table rather than trying to guess
+which cached questions a given import could have affected, since a silently-stale
+cache entry is worse than no cache at all.
+
+**Live-verified end to end**, not just unit tested: asked "Which raw materials have
+only one supplier?" for real (23.5s, a genuine LLM round trip), then asked the exact
+same question again - answered in 3.8s with the status label reading "Answer ready
+(repeat question - served from cache, no LLM call)", confirming zero LLM calls on the
+repeat. 12 new tests in `tests/test_query_cache.py` (184 total): cache-key
+normalization, hit/miss/write/invalidate at the `agent/db.py` level (mocked
+connections, same pattern as `test_chat_history.py`), and the `run_question()`
+integration behavior driven through `AppTest` rather than called directly - `st.status`'s
+`.update()` needs a real Streamlit script-run context to work at all outside `AppTest`,
+the same reason `test_ask_tab_chat_flow.py` already uses that pattern rather than
+calling `run_question()` bare (found by the first draft's direct-call tests failing
+with `AttributeError: 'NoneType' object has no attribute 'update'`).
+
+**Rename**: "About / Architecture" → "Architecture" per direct user request, done as a
+real rename (not just a cosmetic title change) - `ui/tabs/about.py` →
+`ui/tabs/architecture.py`, `render_about_tab` → `render_architecture_tab`, `app.py`'s
+`st.Page(..., title="Architecture", url_path="architecture")` (was `url_path="about"`).
+The Mermaid diagram itself was also updated, not just the tab label - a new green
+`Asked verbatim before?` decision node sits before `classify_query`, branching straight
+to the final answer on a cache hit, plus a dotted edge from `synthesize` into a new
+`query_cache (Postgres)` store node - so the diagram a technical reviewer sees on this
+page now actually reflects the real, current request flow instead of going stale the
+moment this feature shipped.
+
+Applied live to Neon Postgres via a direct script creating just the new `query_cache`
+table (not the full `schema.sql` DROP/CREATE, which would have needlessly wiped the
+demo's accumulated `chat_history`/`action_log` rows for no reason - same reasoning as
+every previous incremental schema change this session). Test cache row from live
+verification cleaned up afterward.

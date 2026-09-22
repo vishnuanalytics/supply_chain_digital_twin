@@ -108,6 +108,11 @@ def import_graph_json(raw_json: str) -> list[str]:
         fetch_full_graph.clear()
         export_graph_json.clear()
         _graph_counts.clear()  # so the sidebar's node/relationship counts update immediately too
+        # A graph write is the one live path that can make a previously-cached answer
+        # wrong (e.g. a newly-added backup supplier), so the whole answer cache is
+        # cleared rather than left to serve stale data - see invalidate_query_cache's
+        # own docstring.
+        db.invalidate_query_cache()
 
     return results
 
