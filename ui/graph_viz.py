@@ -9,10 +9,40 @@ from streamlit_agraph import Config, Edge, Node
 from streamlit_agraph import _agraph as _raw_agraph
 
 from agent import db
-from ui.theme import LABEL_COLORS, MUTED_EDGE_COLOR, MUTED_NODE_COLOR
+from ui.theme import EDGE_COLOR, LABEL_COLORS, MUTED_EDGE_COLOR, MUTED_NODE_COLOR
 
 # Matches our entity ID scheme: RM3, IP12, WH1, S6, V2, P4, D5, R2, C10, C0a, F1
 _ID_PATTERN = re.compile(r"^(RM|IP|WH|V|S|P|D|R|C|F)\d+[a-z]?$")
+
+_ID_KEYS = {"id", "name", "contract_id"}  # already shown in the title's header line
+
+
+def _format_props(props: dict) -> str:
+    """Renders a node's or edge's extra properties (everything beyond id/name, already
+    shown in the header line) as extra lines in a hover title - e.g. SOURCED_FROM's
+    cost_per_unit/lead_time_days/is_primary, or a Contract's dates/value/penalty_clause.
+    Empty for relationship types and nodes that carry no other properties (most of them)."""
+    lines = []
+    for key, value in props.items():
+        if key in _ID_KEYS:
+            continue
+        if isinstance(value, bool):
+            value = "Yes" if value else "No"
+        elif isinstance(value, float):
+            value = round(value, 4)
+        lines.append(f"{key.replace('_', ' ').capitalize()}: {value}")
+    return "\n".join(lines)
+
+
+def _node_title(label: str, node_id: str, name: str, props: dict) -> str:
+    header = f"{label}: {name} ({node_id})"
+    extra = _format_props(props)
+    return f"{header}\n{extra}" if extra else header
+
+
+def _edge_title(rel_type: str, props: dict) -> str:
+    extra = _format_props(props)
+    return f"{rel_type}\n{extra}" if extra else rel_type
 
 
 def keyed_agraph(nodes: list[Node], edges: list[Edge], config: Config, key: str):
@@ -53,18 +83,18 @@ def extract_ids(*sources) -> set[str]:
 def fetch_full_graph() -> tuple[list[Node], list[Edge]]:
     node_rows = db.run_cypher(
         "MATCH (n) RETURN labels(n)[0] AS label, coalesce(n.id, n.contract_id) AS node_id, "
-        "coalesce(n.name, n.contract_id) AS display_name"
+        "coalesce(n.name, n.contract_id) AS display_name, properties(n) AS props"
     )
     edge_rows = db.run_cypher(
         "MATCH (a)-[r]->(b) RETURN coalesce(a.id, a.contract_id) AS source, "
-        "coalesce(b.id, b.contract_id) AS target, type(r) AS rel_type"
+        "coalesce(b.id, b.contract_id) AS target, type(r) AS rel_type, properties(r) AS props"
     )
 
     nodes = [
         Node(
             id=row["node_id"],
             label=f"{row['display_name']}",
-            title=f"{row['label']}: {row['display_name']} ({row['node_id']})",
+            title=_node_title(row["label"], row["node_id"], row["display_name"], row["props"]),
             size=16,
             color=LABEL_COLORS.get(row["label"], MUTED_NODE_COLOR),
             font={"size": 12, "color": "#334155"},
@@ -75,8 +105,11 @@ def fetch_full_graph() -> tuple[list[Node], list[Edge]]:
     edges = [
         # No `label` here - an always-on text label per edge is what made a 138-edge graph
         # unreadable (overlapping text everywhere). `title` still surfaces the relationship
-        # type on hover, without the visual clutter.
-        Edge(source=row["source"], target=row["target"], title=row["rel_type"], color=MUTED_EDGE_COLOR)
+        # type (+ any properties) on hover, without the visual clutter.
+        Edge(
+            source=row["source"], target=row["target"],
+            title=_edge_title(row["rel_type"], row["props"]), color=EDGE_COLOR,
+        )
         for row in edge_rows
         if row["source"] and row["target"]
     ]
@@ -110,13 +143,15 @@ def fetch_node_neighborhood(node_id: str, hops: int = 1) -> tuple[list[Node], li
 
     focus_rows = db.run_cypher(
         "MATCH (n) WHERE coalesce(n.id, n.contract_id) = $id "
-        "RETURN labels(n)[0] AS label, coalesce(n.name, n.contract_id) AS name",
+        "RETURN labels(n)[0] AS label, coalesce(n.name, n.contract_id) AS name, properties(n) AS props",
         {"id": node_id},
     )
     if not focus_rows:
         return [], [], None
     focus_name = focus_rows[0]["name"]
-    node_info: dict[str, tuple[str, str, int]] = {node_id: (focus_rows[0]["label"], focus_name, 0)}
+    node_info: dict[str, tuple[str, str, int, dict]] = {
+        node_id: (focus_rows[0]["label"], focus_name, 0, focus_rows[0]["props"])
+    }
 
     neighbor_rows = db.run_cypher(
         f"""
@@ -124,40 +159,40 @@ def fetch_node_neighborhood(node_id: str, hops: int = 1) -> tuple[list[Node], li
         MATCH p = (n)-[*1..{hops}]-(m)
         WITH m, min(length(p)) AS hop_distance
         RETURN labels(m)[0] AS label, coalesce(m.id, m.contract_id) AS id,
-               coalesce(m.name, m.contract_id) AS name, hop_distance
+               coalesce(m.name, m.contract_id) AS name, hop_distance, properties(m) AS props
         """,
         {"id": node_id},
     )
     for row in neighbor_rows:
-        node_info[row["id"]] = (row["label"], row["name"], row["hop_distance"])
+        node_info[row["id"]] = (row["label"], row["name"], row["hop_distance"], row["props"])
 
     edge_rows = db.run_cypher(
         """
         MATCH (a)-[r]->(b)
         WHERE coalesce(a.id, a.contract_id) IN $ids AND coalesce(b.id, b.contract_id) IN $ids
         RETURN labels(a)[0] AS a_label, coalesce(a.id, a.contract_id) AS a_id,
-               coalesce(b.id, b.contract_id) AS b_id, type(r) AS rel_type
+               coalesce(b.id, b.contract_id) AS b_id, type(r) AS rel_type, properties(r) AS props
         """,
         {"ids": list(node_info.keys())},
     )
     edges = [
         Edge(
-            source=row["a_id"], target=row["b_id"], title=row["rel_type"],
-            color=LABEL_COLORS.get(row["a_label"], MUTED_EDGE_COLOR),
+            source=row["a_id"], target=row["b_id"], title=_edge_title(row["rel_type"], row["props"]),
+            color=LABEL_COLORS.get(row["a_label"], EDGE_COLOR),
         )
         for row in edge_rows
     ]
 
     nodes = [
         Node(
-            id=nid, label=name, title=f"{label}: {name} ({nid})",
+            id=nid, label=name, title=_node_title(label, nid, name, props),
             # Bigger and more sharply labeled the closer a node is to the clicked one,
             # so a 2-3 hop view still reads as "centered on X" rather than a flat blob.
             size=30 if dist == 0 else max(12, 20 - 4 * dist),
             color=LABEL_COLORS.get(label, MUTED_NODE_COLOR),
             font={"size": 15 if dist == 0 else max(9, 13 - 2 * dist), "color": "#334155"},
         )
-        for nid, (label, name, dist) in node_info.items()
+        for nid, (label, name, dist, props) in node_info.items()
     ]
     return nodes, edges, focus_name
 
@@ -175,39 +210,41 @@ def fetch_highlighted_subgraph(highlighted_ids: set[str]) -> tuple[list[Node], l
         MATCH (n) WHERE coalesce(n.id, n.contract_id) IN $ids
         OPTIONAL MATCH (n)-[r]-(m)
         RETURN labels(n)[0] AS n_label, coalesce(n.id, n.contract_id) AS n_id,
-               coalesce(n.name, n.contract_id) AS n_name,
+               coalesce(n.name, n.contract_id) AS n_name, properties(n) AS n_props,
                labels(m)[0] AS m_label, coalesce(m.id, m.contract_id) AS m_id,
-               coalesce(m.name, m.contract_id) AS m_name, type(r) AS rel_type
+               coalesce(m.name, m.contract_id) AS m_name, properties(m) AS m_props,
+               type(r) AS rel_type, properties(r) AS r_props
         LIMIT 300
         """,
         {"ids": list(highlighted_ids)},
     )
 
-    node_info: dict[str, tuple[str, str]] = {}  # id -> (label, name)
+    node_info: dict[str, tuple[str, str, dict]] = {}  # id -> (label, name, props)
     edges: list[Edge] = []
     seen_edges: set[tuple[str, str, str]] = set()
 
     for row in rows:
-        node_info[row["n_id"]] = (row["n_label"], row["n_name"])
+        node_info[row["n_id"]] = (row["n_label"], row["n_name"], row["n_props"])
         if row["m_id"]:
-            node_info.setdefault(row["m_id"], (row["m_label"], row["m_name"]))
+            node_info.setdefault(row["m_id"], (row["m_label"], row["m_name"], row["m_props"]))
             key = tuple(sorted([row["n_id"], row["m_id"]])) + (row["rel_type"],)
             if key not in seen_edges:
                 seen_edges.add(key)
                 both_highlighted = row["n_id"] in highlighted_ids and row["m_id"] in highlighted_ids
                 edges.append(Edge(
-                    source=row["n_id"], target=row["m_id"], title=row["rel_type"],
+                    source=row["n_id"], target=row["m_id"],
+                    title=_edge_title(row["rel_type"], row["r_props"]),
                     color=LABEL_COLORS.get(row["n_label"], MUTED_EDGE_COLOR) if both_highlighted else MUTED_EDGE_COLOR,
                 ))
 
     nodes = [
         Node(
-            id=node_id, label=name, title=f"{label}: {name} ({node_id})",
+            id=node_id, label=name, title=_node_title(label, node_id, name, props),
             size=26 if node_id in highlighted_ids else 14,
             color=LABEL_COLORS.get(label, MUTED_NODE_COLOR) if node_id in highlighted_ids else MUTED_NODE_COLOR,
             font={"size": 13 if node_id in highlighted_ids else 11, "color": "#334155"},
         )
-        for node_id, (label, name) in node_info.items()
+        for node_id, (label, name, props) in node_info.items()
     ]
     return nodes, edges
 
@@ -235,9 +272,15 @@ def default_config(height: int = 500, width: int = 700) -> Config:
             # Straight overlapping lines through shared hub nodes were the biggest
             # source of "clumsy" - smooth curves fan them apart automatically.
             "smooth": {"type": "continuous", "roundness": 0.15},
-            "color": {"opacity": 0.55, "inherit": False},
-            "width": 1,
-            "selectionWidth": 1.5,
+            # Each Edge already carries an explicit, properly visible color string
+            # (EDGE_COLOR or a LABEL_COLORS entry) - an object-shaped default here like
+            # {"opacity": 0.55} previously combined with that per-edge string in a way
+            # that made every edge nearly invisible against the white canvas (reported
+            # directly: "I don't see any edges at all"). Leave color alone; just turn
+            # off gradient-from-node-color inheritance so the explicit color always wins.
+            "color": {"inherit": False},
+            "width": 1.5,
+            "selectionWidth": 2,
             "arrows": {"to": {"enabled": True, "scaleFactor": 0.4}},
             "font": {"size": 0},  # rely on hover title, not always-on labels
         },
@@ -246,7 +289,18 @@ def default_config(height: int = 500, width: int = 700) -> Config:
             "borderWidthSelected": 3,
             "shadow": {"enabled": True, "size": 6, "x": 1, "y": 2},
         },
-        interaction={"hover": True, "tooltipDelay": 120, "dragNodes": True},
+        interaction={
+            "hover": True, "tooltipDelay": 120,
+            # Dragging a node fires the same "selectNode" event as clicking it (vis-
+            # network always selects a node before it can be dragged), and this
+            # component reports every selection back to Python as if it were a
+            # deliberate click - so with dragNodes on, simply repositioning a node
+            # was triggering an unwanted jump into focus mode + page rerun (reported
+            # directly). Turning it off removes the ambiguity: a click always means
+            # "focus this node," never "I was just rearranging it." dragView (panning
+            # the whole canvas) is untouched and still works.
+            "dragNodes": False, "dragView": True,
+        },
     )
     config.physics = {
         "enabled": True,

@@ -55,7 +55,8 @@ def render_graph_explorer_tab() -> None:
     st.markdown("### Graph Explorer")
     st.caption(
         "Filter by entity type below, or click any node to zoom into its connections "
-        "(pick how many hops out once focused). Drag nodes around, scroll to zoom."
+        "(pick how many hops out once focused). Hover a node or edge for details, "
+        "scroll to zoom, drag empty space to pan."
     )
 
     all_labels = list(LABEL_COLORS.keys())

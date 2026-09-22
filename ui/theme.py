@@ -31,7 +31,12 @@ LABEL_COLORS = {
 }
 
 MUTED_NODE_COLOR = "#CBD5E1"
+# Deliberately very pale - only meant for the *de-emphasized* edges/nodes behind a
+# vividly-colored highlighted path (ui/answer_card.py's graph trace). Using this as a
+# graph's only/default edge color (as the Graph Explorer briefly did) makes edges nearly
+# invisible against a white canvas - see EDGE_COLOR below for that case.
 MUTED_EDGE_COLOR = "#E2E8F0"
+EDGE_COLOR = "#94A3B8"
 
 
 def inject_css() -> None:
