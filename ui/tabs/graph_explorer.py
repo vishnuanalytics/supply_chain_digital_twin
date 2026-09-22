@@ -5,6 +5,7 @@ zoom into just its direct connections.
 """
 import streamlit as st
 
+from ui.graph_import_export import render_import_export_section
 from ui.graph_viz import default_config, fetch_full_graph, fetch_node_neighborhood, keyed_agraph
 from ui.theme import LABEL_COLORS
 
@@ -58,6 +59,8 @@ def render_graph_explorer_tab() -> None:
         "(pick how many hops out once focused). Hover a node or edge for details, "
         "scroll to zoom, drag empty space to pan."
     )
+
+    render_import_export_section()
 
     all_labels = list(LABEL_COLORS.keys())
     selected_labels = st.pills(

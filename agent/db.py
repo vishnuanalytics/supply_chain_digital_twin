@@ -95,3 +95,72 @@ def log_action(action_type: str, description: str, status: str, note: str = "") 
         conn.commit()
     finally:
         conn.close()
+
+
+# Every Cypher string above this point is fixed application code, safe to write. From
+# here down is the one place user-supplied *data* (an uploaded JSON file's node/edge
+# properties, via ui/graph_import.py) reaches Neo4j - never routed through run_cypher's
+# LLM-facing path, and never allowed to supply the label/relationship type text that
+# ends up interpolated into a query (Cypher has no way to parameterize a label or
+# relationship type - only a hardcoded allow-list checked before string-building the
+# query is safe). Property *values* are always sent as parameters, never interpolated.
+VALID_NODE_LABELS = {
+    "Facility", "Warehouse", "Region", "Dealer", "Product", "IntermediatePart",
+    "RawMaterial", "Supplier", "ThirdPartyVendor", "Contract",
+}
+# Must stay in lockstep with agent/prompts.py's CYPHER_SYSTEM closed list - that prompt
+# tells the LLM these are the *only* relationship types that exist in the graph, so an
+# import creating any other type would silently make that claim false.
+VALID_REL_TYPES = {
+    "SOURCED_FROM", "BACKUP_FOR", "USED_IN", "PURCHASED_FROM", "MANUFACTURED_AT",
+    "STORED_IN", "SUPPLIES", "SERVICES", "HAS_CONTRACT", "PREVIOUSLY_CONTRACTED", "COVERS",
+}
+
+
+def id_property_for_label(label: str) -> str:
+    """Every label keys its unique id as `id`, except Contract (`contract_id`, matching
+    its own real schema constraint) - see neo4j/schema.cypher."""
+    return "contract_id" if label == "Contract" else "id"
+
+
+def upsert_node(label: str, properties: dict) -> str:
+    """Creates a node if its id doesn't exist yet, or merges these properties into the
+    existing one if it does - "add new data" should be forgiving of re-running the same
+    import twice, not error out on a duplicate. Returns the node's id."""
+    if label not in VALID_NODE_LABELS:
+        raise ValueError(f"Unknown node label {label!r} - must be one of {sorted(VALID_NODE_LABELS)}")
+    id_key = id_property_for_label(label)
+    node_id = properties.get(id_key)
+    if not node_id:
+        raise ValueError(f"A {label} node needs a non-empty '{id_key}' property")
+
+    driver = get_neo4j_driver()
+    with driver.session(database=config.NEO4J_DATABASE) as session:
+        session.run(
+            f"MERGE (n:{label} {{{id_key}: $id_value}}) SET n += $properties",
+            {"id_value": node_id, "properties": properties},
+        )
+    return str(node_id)
+
+
+def upsert_edge(source_id: str, target_id: str, rel_type: str, properties: dict) -> None:
+    """Both endpoints must already exist (either already in the graph, or created by an
+    earlier node in the same import) - silently creating a bare placeholder node for a
+    typo'd id would be far more confusing than a clear error."""
+    if rel_type not in VALID_REL_TYPES:
+        raise ValueError(f"Unknown relationship type {rel_type!r} - must be one of {sorted(VALID_REL_TYPES)}")
+
+    driver = get_neo4j_driver()
+    with driver.session(database=config.NEO4J_DATABASE) as session:
+        result = session.run(
+            f"""
+            MATCH (a) WHERE coalesce(a.id, a.contract_id) = $source_id
+            MATCH (b) WHERE coalesce(b.id, b.contract_id) = $target_id
+            MERGE (a)-[r:{rel_type}]->(b)
+            SET r += $properties
+            RETURN a.id AS matched
+            """,
+            {"source_id": source_id, "target_id": target_id, "properties": properties},
+        )
+        if result.single() is None:
+            raise ValueError(f"Couldn't find both '{source_id}' and '{target_id}' already in the graph")

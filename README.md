@@ -68,7 +68,7 @@ the actual Cypher/SQL and which LLM engine/latency answered each step.
 | Tab | What it does |
 |---|---|
 | 💬 **Ask a Question** | Chat-style Q&A with 6 example questions, streaming status updates tied to the actual LangGraph node running (not a generic spinner) |
-| 🕸️ **Graph Explorer** | The full supply chain graph — draggable, zoomable, colored by entity type |
+| 🕸️ **Graph Explorer** | The full supply chain graph — zoomable, colored by entity type, filterable by type, click any node to zoom into its connections (1-3 hops), hover for full properties, and import/export the graph as JSON to add new suppliers/materials/contracts etc. without writing Cypher |
 | 📄 **Contracts & Billing** | Active contracts with color-coded expiry warnings, this month's billing summary, a per-contract shipment Gantt chart, and click-to-drill-down into the same 3-layer card |
 | ℹ️ **About / Architecture** | This project's purpose and the diagram above, for technical reviewers |
 
