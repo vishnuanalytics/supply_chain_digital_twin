@@ -61,76 +61,20 @@ def _render_approval_prompt(pending: dict) -> None:
         st.rerun()
 
 
-def _reset_conversation() -> None:
-    st.session_state["history"] = []
-    st.session_state["conversation_history"] = []
-    st.session_state["session_id"] = str(uuid.uuid4())
-    st.session_state.pop("pending_approval", None)
-
-
-def _load_session(session_id: str) -> None:
-    """Reconstructs `history`/`conversation_history` from a persisted session so its
-    cards render exactly as they did live (state_json is the same dict render_answer_card
-    already knows how to render). Sets session_id to the loaded session rather than a
-    fresh one, so continuing to chat appends new turns to this same persisted session -
-    "load" resumes a conversation rather than just viewing a read-only snapshot."""
-    rows = db.get_chat_session(session_id)
-    history = []
-    conversation_history = []
-    for row in rows:
-        state = row["state_json"] or {}
-        history.append({"question": row["question"], "state": state})
-        answer = state.get("answer")
-        if answer:
-            conversation_history.append({"question": row["question"], "answer": answer})
-    st.session_state["history"] = history
-    st.session_state["conversation_history"] = conversation_history
-    st.session_state["session_id"] = session_id
-    st.session_state.pop("pending_approval", None)
-
-
-def _render_past_conversations() -> None:
-    with st.popover("📜 Past conversations", width="stretch"):
-        try:
-            sessions = db.list_chat_sessions(limit=15)
-        except Exception as exc:
-            st.caption(f"Couldn't load past conversations: {exc}")
-            return
-        if not sessions:
-            st.caption("No past conversations yet.")
-            return
-        current = st.session_state.get("session_id")
-        for s in sessions:
-            label = s["first_question"]
-            if len(label) > 60:
-                label = label[:60] + "..."
-            is_current = s["session_id"] == current
-            cols = st.columns([4, 1])
-            cols[0].markdown(f"{'**▸ ' if is_current else ''}{label}{'**' if is_current else ''}")
-            cols[0].caption(f"{s['turn_count']} turn(s) · {s['last_activity']:%Y-%m-%d %H:%M}")
-            if not is_current and cols[1].button("Load", key=f"load_session_{s['session_id']}"):
-                _load_session(s["session_id"])
-                st.rerun()
-
-
 def render_ask_tab() -> None:
+    # session_id/history/conversation_history are set up by render_sidebar()'s
+    # "Conversations" section, which always runs before any tab (see app.py) - the
+    # New chat button and past-session list live there now, ChatGPT-sidebar style,
+    # rather than behind a popover local to this tab.
     st.session_state.setdefault("session_id", str(uuid.uuid4()))
     st.session_state.setdefault("history", [])
     st.session_state.setdefault("conversation_history", [])
 
-    header_col, past_col, reset_col = st.columns([4, 1.4, 1])
-    header_col.markdown("### Ask a question")
-    with past_col:
-        _render_past_conversations()
-    reset_col.button(
-        "🔄 New conversation", width="stretch", key="reset_conversation",
-        help="Clears follow-up context (e.g. \"its backup supplier\") and the visible history below.",
-        on_click=_reset_conversation,
-    )
+    st.markdown("### Ask a question")
     st.caption(
         "Try one of these, or type your own question below. Follow-ups work within a "
         "session - e.g. ask about a supplier, then \"what's its on-time delivery rate?\" "
-        "Past conversations are saved automatically and can be reloaded above."
+        "Past conversations are saved automatically - see \"💬 Conversations\" in the sidebar."
     )
 
     pending_approval = st.session_state.get("pending_approval")

@@ -422,13 +422,25 @@ errored turn isn't meaningful conversation memory), matching the existing in-mem
 Three new functions in `agent/db.py`: `log_chat_turn` (write), `list_chat_sessions`
 (one row per session — first question as a label, turn count, last-active time — for a
 lightweight session browser without pulling every session's full state_json),
-`get_chat_session` (every turn in one session, oldest first). Wired into
-`ui/tabs/ask.py`: a "📜 Past conversations" popover next to "🔄 New conversation" lists
-recent sessions with a "Load" button per row; loading one keeps `session_id` pointed at
-that same session (not a fresh one), so continuing to chat resumes and appends to it
-rather than just viewing a read-only snapshot. The `db.log_chat_turn` call in
-`_remember()` is wrapped in a bare try/except — persistence is a nice-to-have and must
-never block the live chat on a DB write failure.
+`get_chat_session` (every turn in one session, oldest first). `agent/db.py`'s
+`_remember()` call site (`ui/tabs/ask.py`) wraps `db.log_chat_turn` in a bare
+try/except — persistence is a nice-to-have and must never block the live chat on a DB
+write failure.
+
+**UI redesign, same day, direct user feedback ("I thought you'd make this like GPT
+chat")**: the first pass put the session browser behind a "📜 Past conversations"
+popover local to the Ask tab, with a separate "🔄 New conversation" button next to it —
+functionally equivalent to ChatGPT's history, but hidden until clicked, which doesn't
+read as "chat history" the way ChatGPT's always-visible left rail does. Moved it into
+the real Streamlit sidebar (`ui/sidebar.py`, which already renders before every tab in
+`app.py` and already holds global app state like the Jev toggle) as a "💬
+Conversations" section: an "➕ New chat" button plus every past session listed as its
+own clickable row (`new_chat_session()`/`load_chat_session()`, replacing the tab-local
+`_reset_conversation()`/`_load_session()`). Because it's real `st.session_state` (not
+tab-scoped), this works identically no matter which tab is open, same as ChatGPT's
+sidebar staying put across different chats. `ui/tabs/ask.py` shrank back down to just
+the header/caption plus the existing question flow — `_remember()` is the only
+persistence-related code left there.
 
 Confirmed directly against the live Neon Postgres (not assumed) that psycopg2
 auto-casts a `json.dumps(..., default=str)` string to `jsonb` on `INSERT` and hands it
@@ -447,4 +459,7 @@ session round-trips correctly (list shows it with the right first-question/turn-
 load reconstructs `history`/`conversation_history`/`session_id` exactly) — then cleaned
 up the test rows. 7 new mocked unit tests added in `tests/test_chat_history.py`
 (121 total, all green) covering `log_chat_turn`'s JSON serialization (including the
-`Decimal`/`date` → `str` fallback) and both read queries' SQL shape.
+`Decimal`/`date` → `str` fallback) and both read queries' SQL shape. Re-ran the same
+live round-trip script after the sidebar redesign above against
+`new_chat_session`/`load_chat_session` (the renamed/relocated functions) — identical
+result, confirming the move didn't change any actual persistence behavior.
