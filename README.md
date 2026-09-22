@@ -224,19 +224,26 @@ had zero effect.
 Built after the spec's own Definition of Done was already met, specifically to
 show a few more things an AI-engineering role usually cares about:
 
-- **CI + a real unit test suite** — 121 pytest tests (`tests/`) covering the
+- **CI + a real unit test suite** — 123 pytest tests (`tests/`) covering the
   deterministic logic the eval harness alone doesn't isolate: JSON-output
   parsing, `simulate_scenario`'s what-if math, `_assert_read_only`'s
   injection-resilience (see below), the LLM provider fallback chain, and the
   Jev fallback. Every external call is mocked — no live credentials needed —
   confirmed by running the suite with `.env` removed entirely. Runs in under
   2 seconds and in [GitHub Actions](.github/workflows/ci.yml) on every push.
-- **Multi-turn conversation memory** — follow-ups like *"what's its on-time
-  delivery rate?"* right after asking about a supplier now work.
-  `classify_query` optionally receives a short window of recent Q&A pairs
-  and, when the question references something from that history, rewrites it
-  into a fully self-contained `resolved_question` that every downstream node
-  uses instead.
+- **Multi-turn conversation memory, rendered as an actual chat thread** —
+  follow-ups like *"what's its on-time delivery rate?"* right after asking
+  about a supplier work: `classify_query` optionally receives a short window
+  of recent Q&A pairs and, when the question references something from that
+  history, rewrites it into a fully self-contained `resolved_question` that
+  every downstream node uses instead. The Ask tab renders the whole session
+  as `st.chat_message` bubbles in chronological (oldest-first) order with
+  the input pinned at the bottom — a real back-and-forth conversation, not a
+  reverse-chronological stack of separate report cards (the first draft's
+  layout made continuous chat *work* but not *look* like chat — direct user
+  feedback: *"I need like that flow, continuous chat rather for single
+  question and answer"*). Example-question suggestions disappear the moment
+  a conversation starts, same as a typical chat app's empty-state prompts.
 - **Persistent, ChatGPT-style chat history** — `st.session_state` alone is
   purely in-memory and wipes on a page refresh or server restart, so every
   successfully-answered turn is also written to a Postgres `chat_history`

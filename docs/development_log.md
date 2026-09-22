@@ -463,3 +463,65 @@ up the test rows. 7 new mocked unit tests added in `tests/test_chat_history.py`
 live round-trip script after the sidebar redesign above against
 `new_chat_session`/`load_chat_session` (the renamed/relocated functions) — identical
 result, confirming the move didn't change any actual persistence behavior.
+
+## Ask tab rendered as an actual chat thread — 2026-09-22
+
+Direct user feedback: *"I thoght you make this like gpt chat... My request is can I
+ask continous questions in a single seassion... Like I am chatting with you I need
+like that flow, continuous chat rather for single question and answer."* The
+underlying capability was already there - `conversation_history`/`resolved_question`
+(the multi-turn memory extension, above) genuinely thread context between turns - but
+the Ask tab rendered every turn as a separate `**Q: ...**` + 3-layer report card,
+newest first (`reversed(history)`), which reads as a stack of one-off Q&As, not a
+conversation. Rewrote `ui/tabs/ask.py` to actually look like a chat:
+
+- Every turn (question + answer/error) is wrapped in `st.chat_message("user")` /
+  `st.chat_message("assistant")` bubbles, rendered **chronologically** (oldest first,
+  not reversed) - a real scrolling conversation log, with `st.chat_input` naturally
+  pinned at the bottom.
+- A new question is rendered live, inline, at the end of the existing thread (not via
+  the history loop) so `run_question()`'s `st.status(...)` "thinking..." indicator
+  shows up in the right place - the next message in the conversation - rather than at
+  the top of the page.
+- Example-question suggestions only show before the thread has started
+  (`if not history and not pending_approval and not has_pending_question`) - like a
+  typical chat app's empty-state prompts, not permanent clutter once a conversation is
+  underway. Needed a peeked-but-not-popped `has_pending_question` check (not just
+  `history`) **plus** an explicit `st.rerun()` right after setting `pending_question`
+  from an example click - without both, examples still showed for one extra render
+  pass alongside the in-progress first answer, since Streamlit executes top-to-bottom
+  and `history` isn't populated until deep in that same pass. Verified this exact
+  two-part fix in both a real browser (Playwright) and a mocked `AppTest`.
+- `render_error_card()` gained a `show_question: bool = True` param (`ui/agent_runner.py`)
+  so its own built-in "**Q: ...**" line can be suppressed when the question is already
+  shown by the surrounding chat bubble - `ui/tabs/billing.py`'s drilldown call is
+  unaffected (still defaults to showing it, no separate bubble there).
+
+**Verification without live LLM quota:** all three providers were quota-exhausted
+during this work (Groq empty-content near its daily ceiling even after switching to
+`openai/gpt-oss-20b`, OpenRouter's free-tier daily cap hit, Anthropic has no credit -
+see the LLM provider notes elsewhere in this file), so a real successful two-turn
+conversation couldn't be screenshotted this round. Used `streamlit.testing.v1.AppTest`
+instead, with `agent.graph.get_graph()` mocked (patched as `ui.agent_runner.get_graph`,
+since it's imported by name - same gotcha class as `llm_client._PROVIDER_FNS`), to
+prove the actual behavior that matters: asking two questions in one session renders
+as `["user", "assistant", "user", "assistant"]` (chronological, not reversed), the
+graph is invoked exactly twice, and critically **the second call's
+`conversation_history` genuinely contains the first turn's real Q&A** - not just a
+UI that looks continuous, but proof the context is actually threaded through. New
+tests: `tests/test_ask_tab_chat_flow.py` (2 tests, 123 total suite). Also did get a
+real (non-LLM) browser confirmation of the visual layer itself: chat bubbles with
+correct user/assistant avatars, no duplicated question text, and examples correctly
+disappearing the instant a question is submitted (all via the pre-existing
+`apt-get download` + `dpkg -x` no-root Chromium workaround documented earlier in this
+file) - the only thing not re-confirmed live was a *successful* (non-error) answer
+rendering inside a bubble, since that code path (`render_answer_card`) is unchanged
+from before and was already proven live in earlier build steps.
+
+**Real bug the zero-cost headroom trick did NOT protect against, worth remembering
+again:** temporarily switched `GROQ_MODEL` to `openai/gpt-oss-20b` to find quota
+headroom for this test; the check request (`max_tokens=65536`) got HTTP 200 and
+actually ran for real (not rejected) - meaning there WAS headroom before this probe,
+which the probe itself then consumed. Confirms the existing note: this trick is only
+"free" when headroom is already smaller than the oversized request; otherwise it
+silently spends real quota. `GROQ_MODEL` restored to `openai/gpt-oss-120b` afterward.

@@ -84,9 +84,10 @@ def resume_question(thread_id: str, approved: bool, note: str = "") -> dict:
             return {"error": str(exc)}
 
 
-def render_error_card(question: str, error: str) -> None:
+def render_error_card(question: str, error: str, show_question: bool = True) -> None:
     st.markdown('<div class="scdt-card">', unsafe_allow_html=True)
-    st.markdown(f"**Q: {question}**")
+    if show_question:
+        st.markdown(f"**Q: {question}**")
     st.markdown(
         '<div class="scdt-empty-state">🔴 Couldn\'t reach any configured LLM provider to answer this. '
         "This usually means a free-tier daily quota is exhausted, or a provider needs a credit "
