@@ -4,6 +4,7 @@ The agent generates Cypher/SQL from an LLM, so every query passes through
 `_assert_read_only` first — this is a Q&A agent over a seeded demo dataset and
 must never let a hallucinated or prompt-injected query mutate it.
 """
+import json
 import re
 
 import neo4j.time
@@ -95,6 +96,55 @@ def log_action(action_type: str, description: str, status: str, note: str = "") 
         conn.commit()
     finally:
         conn.close()
+
+
+def log_chat_turn(session_id: str, question: str, state: dict) -> None:
+    """Persists one answered question so conversation history survives a page refresh
+    or server restart - see chat_history's own comment in postgres/schema.sql for why
+    the whole state dict is stored, not just question/answer text. `state` goes through
+    json.dumps(default=str) since it can contain Decimal/date values from Postgres rows
+    that aren't natively JSON-serializable; Postgres then auto-casts that JSON text to
+    the column's jsonb type on insert (confirmed directly, not assumed), and psycopg2
+    hands it back as a plain Python dict on read with no extra deserialization step."""
+    conn = get_postgres_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO chat_history (session_id, question, state_json) VALUES (%s, %s, %s)",
+                (session_id, question, json.dumps(state, default=str)),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def list_chat_sessions(limit: int = 20) -> list[dict]:
+    """One row per session, most recently active first - session_id, its first
+    question (as a display label), how many turns it has, and when it was last active.
+    Used to populate a "past conversations" browser without pulling every session's
+    full (potentially large) state_json just to list them."""
+    return run_sql(
+        """
+        SELECT session_id,
+               (array_agg(question ORDER BY created_at ASC))[1] AS first_question,
+               count(*) AS turn_count,
+               max(created_at) AS last_activity
+        FROM chat_history
+        GROUP BY session_id
+        ORDER BY last_activity DESC
+        LIMIT %s
+        """,
+        (limit,),
+    )
+
+
+def get_chat_session(session_id: str) -> list[dict]:
+    """Every turn in one session, oldest first, each with its full renderable state."""
+    return run_sql(
+        "SELECT question, state_json, created_at FROM chat_history "
+        "WHERE session_id = %s ORDER BY created_at ASC",
+        (session_id,),
+    )
 
 
 # Every Cypher string above this point is fixed application code, safe to write. From

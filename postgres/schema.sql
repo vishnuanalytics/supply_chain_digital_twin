@@ -9,6 +9,7 @@
 -- everything else in this schema has no dependency on it.
 CREATE EXTENSION IF NOT EXISTS vector;
 
+DROP TABLE IF EXISTS chat_history CASCADE;
 DROP TABLE IF EXISTS supplier_notes CASCADE;
 DROP TABLE IF EXISTS action_log CASCADE;
 DROP TABLE IF EXISTS invoices CASCADE;
@@ -126,6 +127,24 @@ CREATE TABLE action_log (
     note          TEXT,
     decided_at    TIMESTAMP NOT NULL DEFAULT now()
 );
+
+-- Persists every answered question, grouped by browser session, so conversation
+-- history survives a page refresh or a server restart - st.session_state alone is
+-- purely in-memory and both of those wipe it. state_json is the same
+-- answer_card.render_answer_card()-renderable state dict the live UI already builds
+-- (answer, confidence, neo4j_result/postgres_result/semantic_result, reasoning_log,
+-- etc.), stored as-is, so reloading a past session renders an identical answer card,
+-- not just the question/answer text. Only successful turns are logged (a question that
+-- errored out isn't meaningful conversation memory).
+CREATE TABLE chat_history (
+    turn_id       SERIAL PRIMARY KEY,
+    session_id    VARCHAR(36) NOT NULL,
+    question      TEXT NOT NULL,
+    state_json    JSONB NOT NULL,
+    created_at    TIMESTAMP NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_chat_history_session ON chat_history(session_id);
+CREATE INDEX idx_chat_history_created ON chat_history(created_at DESC);
 
 -- Free-text audit/quality/risk notes per supplier or third-party vendor (supplier_id
 -- matches the Neo4j Supplier/ThirdPartyVendor id) - the one genuinely unstructured

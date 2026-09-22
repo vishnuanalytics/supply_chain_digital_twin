@@ -403,3 +403,48 @@ mermaid.js), so it cannot catch bugs that only manifest in actual rendering.
   custom CSS injected via `st.markdown` — baseweb's internal tab styling isn't
   reliably overridable by injected CSS; needed an actual `.streamlit/config.toml`
   `[theme]` block (`primaryColor` etc.) to take effect.
+
+## Persistent, session-wise chat history — 2026-09-22
+
+`st.session_state`-based conversation memory (above) is purely in-memory — a page
+refresh or a server restart wipes it, which isn't "conversation history" so much as
+"conversation memory for as long as the tab stays open." Added a `chat_history`
+Postgres table (`postgres/schema.sql`) storing one row per answered turn: `session_id`
+(a UUID generated per browser session, stored in `st.session_state`), the question, and
+`state_json` — the *entire* `render_answer_card()`-renderable state dict (answer,
+confidence, neo4j_result/postgres_result/semantic_result, reasoning_log, etc.), not just
+question/answer text. Storing the full state means "load a past session" renders an
+identical 3-layer answer card with zero special-casing in `answer_card.py` — the loaded
+state is structurally identical to a live one. Only successful turns are logged (an
+errored turn isn't meaningful conversation memory), matching the existing in-memory
+`conversation_history` pattern.
+
+Three new functions in `agent/db.py`: `log_chat_turn` (write), `list_chat_sessions`
+(one row per session — first question as a label, turn count, last-active time — for a
+lightweight session browser without pulling every session's full state_json),
+`get_chat_session` (every turn in one session, oldest first). Wired into
+`ui/tabs/ask.py`: a "📜 Past conversations" popover next to "🔄 New conversation" lists
+recent sessions with a "Load" button per row; loading one keeps `session_id` pointed at
+that same session (not a fresh one), so continuing to chat resumes and appends to it
+rather than just viewing a read-only snapshot. The `db.log_chat_turn` call in
+`_remember()` is wrapped in a bare try/except — persistence is a nice-to-have and must
+never block the live chat on a DB write failure.
+
+Confirmed directly against the live Neon Postgres (not assumed) that psycopg2
+auto-casts a `json.dumps(..., default=str)` string to `jsonb` on `INSERT` and hands it
+back as a native Python dict on `SELECT` — no manual `json.loads()` needed anywhere in
+the read path. `default=str` matters because `state` can carry `Decimal`/`date` values
+surfaced from Postgres rows earlier in the same turn, which aren't natively
+JSON-serializable.
+
+**Browser testing note:** real Chromium wouldn't launch in this sandbox this round
+(`libnspr4.so` missing, no root — see the `apt-get download` + `dpkg -x` workaround
+documented above) and re-doing that workaround wasn't worth the time for this feature.
+Instead ran a direct end-to-end script against the live database exercising the actual
+production functions (`ask._remember` → `db.log_chat_turn`, `db.list_chat_sessions`,
+`ask._load_session` → `db.get_chat_session`) rather than mocks — confirmed a two-turn
+session round-trips correctly (list shows it with the right first-question/turn-count,
+load reconstructs `history`/`conversation_history`/`session_id` exactly) — then cleaned
+up the test rows. 7 new mocked unit tests added in `tests/test_chat_history.py`
+(121 total, all green) covering `log_chat_turn`'s JSON serialization (including the
+`Decimal`/`date` → `str` fallback) and both read queries' SQL shape.
