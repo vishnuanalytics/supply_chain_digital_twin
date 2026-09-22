@@ -178,7 +178,11 @@ development, and the UI was verified with real headless-Chromium browser
 testing, not just Python-level checks. See
 [`docs/development_log.md`](docs/development_log.md) for the real bugs found
 along the way and the non-obvious lessons behind design decisions that
-aren't visible from reading the code alone.
+aren't visible from reading the code alone. See
+[`docs/security_notes.md`](docs/security_notes.md) for a deliberate
+prompt-injection red-team pass — including a live jailbreak attempt run
+through the real agent, with before/after database state confirming it
+had zero effect.
 
 ### Optional extensions (build step 8)
 

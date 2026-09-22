@@ -45,6 +45,47 @@ class TestAssertReadOnly:
         db._assert_read_only("SELECT created_at FROM invoices")
 
 
+class TestPromptInjectionResilience:
+    """agent/db.py's _assert_read_only is the last line of defense if an LLM node ever
+    gets tricked (via a crafted question, or - the subtler threat - via injected text
+    sitting in retrieved DATA that later gets fed back into a prompt) into generating a
+    destructive query. These payloads model realistic ways a confused or jailbroken LLM
+    might phrase a write, not just the straightforward cases above - see
+    docs/security_notes.md for the live, full-pipeline version of this test.
+    """
+
+    @pytest.mark.parametrize("query", [
+        # Semicolon-chained: a legitimate-looking read followed by a write - the regex
+        # is a global search, not anchored to the first statement, so this must still block.
+        "MATCH (n:Supplier) RETURN n; MATCH (m) DETACH DELETE m",
+        "SELECT * FROM contracts; DROP TABLE contracts;",
+        # The write keyword mid-query, after real-looking read clauses - a jailbroken
+        # LLM asked to "also fix the data while you're there" would plausibly write this.
+        "MATCH (s:Supplier {id: 'S1'}) SET s.risk_rating = 'trusted' RETURN s",
+        "MATCH (n:Supplier) WHERE n.id = 'S1' WITH n MERGE (n)-[:TRUSTED]->(n) RETURN n",
+        # Mixed case / whitespace tricks - a naive keyword-list check that assumed
+        # exact-case or single-space formatting would miss these.
+        "MaTcH (n) DeTaCh DeLeTe n",
+        "MATCH (n)\nDETACH\nDELETE n",
+        # Comment-prefixed - trying to look like an aside rather than an instruction.
+        "MATCH (n:Supplier) RETURN n // then CREATE (m:Backdoor)",
+    ])
+    def test_blocks_realistic_injection_style_payloads(self, query):
+        with pytest.raises(db.QuerySafetyError):
+            db._assert_read_only(query)
+
+    def test_deliberate_over_blocking_tradeoff_documented_here(self):
+        # A real company literally named "Create Corp" would trip this guard on a
+        # perfectly innocent read query - \bCREATE\b matches "Create" as a standalone
+        # word regardless of surrounding context. This is accepted as the right
+        # tradeoff: the failure mode is "can't search for a name containing a SQL/Cypher
+        # keyword" (a rare, recoverable annoyance), not "a write silently executes" (a
+        # real incident) - full query parsing to disambiguate would be real complexity
+        # for a portfolio-scale project's safety guard to carry. Documented, not "fixed".
+        with pytest.raises(db.QuerySafetyError):
+            db._assert_read_only("MATCH (n) WHERE n.name CONTAINS 'Create Corp' RETURN n")
+
+
 class TestToNative:
     def test_passes_through_plain_values(self):
         assert db._to_native("hello") == "hello"
