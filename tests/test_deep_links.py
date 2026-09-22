@@ -127,12 +127,20 @@ class TestGraphNodeDeepLink:
         # Mocked at the ui.tabs.graph_explorer level (not the underlying Cypher) -
         # these are imported by name into that module, so patching agent.db.run_cypher
         # wouldn't reach them anyway (same gotcha class as llm_client._PROVIDER_FNS).
+        # agent.db.run_cypher itself is ALSO mocked - render_graph_explorer_tab() calls
+        # render_import_export_section() (ui/graph_import_export.py's export_graph_json,
+        # a real live Neo4j call) before ever reaching the focus-view code under test;
+        # missing this made the test pass locally only because real .env credentials
+        # were present, while CI (correctly, by design - no live credentials) failed on
+        # it - every live call path this function takes needs mocking, not just the one
+        # this test cares about.
         full_graph_nodes = [Node(id="RM3", label="Aluminum Alloy Billet", size=16, color="#EF4444")]
         with patch("ui.tabs.graph_explorer.fetch_full_graph", return_value=(full_graph_nodes, [])), \
              patch(
                  "ui.tabs.graph_explorer.fetch_node_neighborhood",
                  return_value=(full_graph_nodes, [], "Aluminum Alloy Billet"),
-             ):
+             ), \
+             patch("agent.db.run_cypher", return_value=[]):
             at = AppTest.from_function(_graph_explorer_mini_app)
             at.query_params["node"] = "RM3"
             at.run(timeout=30)
