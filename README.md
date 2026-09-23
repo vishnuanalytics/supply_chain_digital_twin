@@ -34,20 +34,26 @@ of looking polished.
 
 ```mermaid
 flowchart TD
-    Q["User question"] --> CQ["classify_query<br/>(LLM: routes the question)"]
+    Q["User question"] --> C{"Asked verbatim<br/>before?"}
+    C -->|"yes"| HIT["Cached answer<br/>(no LLM call)"]
+    C -->|"no"| CQ["classify_query<br/>(LLM: routes the question)"]
     CQ -->|"graph_traversal /<br/>compound_multi_hop"| QN["query_neo4j<br/>(LLM writes Cypher)"]
     CQ -->|"inventory / cost /<br/>contract_status / sales"| QP["query_postgres<br/>(LLM writes SQL)"]
+    CQ -->|"semantic_search"| QS["query_semantic<br/>(pgvector over free-text notes)"]
     CQ -->|"disruption / capacity /<br/>cost_impact"| SIM["simulate_scenario<br/>(deterministic Python)"]
     QN -->|"compound_multi_hop<br/>needs both stores"| QP
     QN -->|"else"| VR
     QP --> VR["validate_results<br/>(Corrective-RAG-style check)"]
-    SIM --> VR
+    QS --> VR
+    SIM --> HG["human_approval_gate<br/>(LangGraph interrupt: Approve / Reject)"]
+    HG --> VR
     VR -->|"invalid, retries left"| CQ
     VR -->|"valid, or gave up"| SY["synthesize<br/>(LLM writes the final answer)"]
     SY --> A["Plain-English answer +<br/>confidence + reasoning trace"]
 
     QN -.-> N4J[("Neo4j AuraDB<br/>(relationships)")]
     QP -.-> PG[("PostgreSQL / Neon<br/>(transactions)")]
+    QS -.-> PG
 ```
 
 `classify_query` routes each question by type; `query_neo4j`/`query_postgres`
@@ -57,6 +63,64 @@ with hand-coded traversal + arithmetic instead of freeform LLM queries, since
 those need reliable multi-hop reasoning rather than creativity;
 `validate_results` catches a wrong or empty result and retries with feedback
 before giving up; `synthesize` writes the final plain-English answer.
+`query_semantic` handles questions no column answers (e.g. quality or
+compliance concerns) by searching free-text supplier notes, and
+`human_approval_gate` pauses a high-stakes recommendation (such as reordering
+from a backup supplier) until a person approves or rejects it.
+
+## System architecture
+
+```mermaid
+flowchart TB
+    subgraph UI["Streamlit app · 5 pages with real URLs"]
+        direction LR
+        ASK["💬 Ask a Question<br/>chat + history sidebar"]
+        DASH["🕸️ Graph Explorer · 📄 Contracts & Billing ·<br/>📈 Sales · ℹ️ Architecture"]
+    end
+
+    subgraph AGENT["LangGraph agent · agent/"]
+        direction LR
+        G["StateGraph<br/>classify → query → validate → synthesize"]
+        SE["Semantic search<br/>fastembed, local ONNX"]
+        CK["Checkpointer<br/>paused approvals"]
+    end
+
+    subgraph EXT["External services"]
+        direction LR
+        LLM["LLM fallback chain<br/>Groq → OpenRouter → Anthropic → Gemini"]
+        OPT["Optional: TypeSafe Jev classifier,<br/>LangSmith tracing"]
+    end
+
+    subgraph DATA["Data stores"]
+        direction LR
+        N4J[("Neo4j AuraDB<br/>suppliers · materials · parts · products ·<br/>facilities · dealers · contracts")]
+        PG[("PostgreSQL / Neon<br/>inventory · shipments · invoices · billing · sales<br/>+ chat_history · query_cache · action_log ·<br/>supplier_notes (pgvector) · checkpoints")]
+    end
+
+    ASK -->|"questions"| AGENT
+    DASH -->|"row drill-down"| AGENT
+    DASH -->|"direct reads, no LLM"| DATA
+    AGENT --> EXT
+    AGENT -->|"generated Cypher / SQL"| DATA
+```
+
+- **Two stores, each for what it does best.** Relationships (who supplies
+  what, which parts go into which product, which dealer sells in which region)
+  live in **Neo4j**. Anything with a date and an amount (inventory, shipments,
+  invoices, billing, sales) lives in **PostgreSQL**. Compound questions query
+  both.
+- **The dashboards read the databases directly** for instant rendering. Only
+  the question-answering path (and a dashboard row's drill-down) goes through
+  the LLM agent.
+- **Postgres also holds the app's own state**: the exact-match answer cache
+  (`query_cache`), per-session chat history (`chat_history`), approval
+  decisions (`action_log`), LangGraph's checkpointer for paused runs, and
+  pgvector embeddings of free-text supplier notes.
+- **LLM calls go through one client** (`agent/llm_client.py`) that tries
+  Groq, then OpenRouter, Anthropic and Gemini, falling back on any error. A
+  model can also be picked manually in the sidebar.
+- **Deployment**: Streamlit Community Cloud, with GitHub Actions CI running
+  the pytest suite on every push.
 
 ## The app
 
@@ -79,14 +143,49 @@ needed to read every response.
 | 📈 **Sales** | The outbound mirror of Contracts & Billing — revenue and units sold, a 6-month trend, "where we're selling" by region (crosses both stores: revenue lives in Postgres, Dealer→Region only in Neo4j), and the same click-to-drill-down |
 | ℹ️ **Architecture** | This project's purpose, the exact-match answer cache, and the diagram above, for technical reviewers |
 
+### Screenshots
+
+**Ask a Question**: start from an example, then chat naturally. Past
+conversations are kept in the sidebar.
+
+![Ask a Question: example prompts](docs/screenshots/ask_home.png)
+
+**Human-in-the-loop approval**: a what-if scenario that recommends an action
+(here, reordering aluminum from a backup supplier) pauses for Approve / Reject
+before the answer is finalized.
+
+![Approval gate](docs/screenshots/approval_gate.png)
+
 <table>
 <tr>
-<td><img src="docs/screenshots/graph_explorer.png" alt="Graph Explorer tab"/></td>
+<td><img src="docs/screenshots/show_reasoning.png" alt="Show reasoning panel"/></td>
+<td><img src="docs/screenshots/graph_trace.png" alt="Graph trace panel"/></td>
+</tr>
+<tr>
+<td align="center"><em>🔍 Show reasoning: which node ran, on which engine and model, and how long it took</em></td>
+<td align="center"><em>🕸️ Show graph trace: the subgraph behind the answer (disrupted materials in red, affected products in green)</em></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/graph_explorer.png" alt="Graph Explorer"/></td>
 <td><img src="docs/screenshots/contracts_billing.png" alt="Contracts & Billing dashboard"/></td>
 </tr>
 <tr>
-<td align="center"><em>Graph Explorer</em></td>
-<td align="center"><em>Contracts & Billing Dashboard</em></td>
+<td align="center"><em>Graph Explorer: 90 nodes / 182 relationships, filter by type, click to focus</em></td>
+<td align="center"><em>Contracts & Billing: expiry warnings, billing summary, shipment timeline</em></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/shipment_dialog.png" alt="Shipment detail dialog"/></td>
+<td><img src="docs/screenshots/sales.png" alt="Sales dashboard"/></td>
+</tr>
+<tr>
+<td align="center"><em>Click a timeline bar: instant shipment detail with a recommended action (no LLM call)</em></td>
+<td align="center"><em>Sales: revenue trend and revenue by region (Postgres + Neo4j)</em></td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/screenshots/architecture.png" alt="Architecture page"/></td>
+</tr>
+<tr>
+<td colspan="2" align="center"><em>Architecture page: purpose, answer cache, and the live flow diagram</em></td>
 </tr>
 </table>
 
